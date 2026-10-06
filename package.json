@@ -23,9 +23,6 @@
   },
   "license": "MIT",
   "author": "Avelor <cruz@avelor.es>",
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": [
     "tunnel",
     "relay",
@@ -36,10 +33,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/avelor-es/bifrost"
+    "url": "https://github.com/DanielManegoni/bifrost-tunnel"
   },
-  "homepage": "https://github.com/avelor-es/bifrost#readme",
+  "homepage": "https://github.com/DanielManegoni/bifrost-tunnel#readme",
   "bugs": {
-    "url": "https://github.com/avelor-es/bifrost/issues"
+    "url": "https://github.com/DanielManegoni/bifrost-tunnel/issues"
   }
 }

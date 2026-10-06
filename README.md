@@ -1,5 +1,7 @@
 # @avelor/bifrost
 
+> **Nota:** esta versão parte do [bifrost da Avelor](https://github.com/avelor-es/bifrost) (MIT, © Avelor) e acrescenta o repasse de WebSocket upgrade (ex.: Blazor `/_blazor`) pelo túnel.
+
 Self-hosted WebSocket tunnel relay. Expose a local port through your own server — no third-party services, no SSH, no cloud accounts.
 
 ```
