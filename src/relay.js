@@ -5,6 +5,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const { randomUUID }                 = require('crypto');
 const { validate }                   = require('./tokens');
 const { errorResponse }              = require('./errors');
+const { tratarApi }                  = require('./api');
 
 const MAX_QUEUE    = 256;
 const MAX_BODY     = 10 * 1024 * 1024; // 10 MB
@@ -139,6 +140,11 @@ function tunnelUpgrade(req, socket, head) {
 
 function serve(port, host) {
   const server = http.createServer((req, res) => {
+    if ((req.url || '').startsWith('/api/')) {
+      tratarApi(req, res);
+      return;
+    }
+
     if (req.url === '/_sig3/ping') {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('ok');
