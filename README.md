@@ -1,4 +1,4 @@
-# @avelor/bifrost
+# sig3-tunnel
 
 > **Nota:** esta versão parte do [bifrost da Avelor](https://github.com/avelor-es/bifrost) (MIT, © Avelor) e acrescenta o repasse de WebSocket upgrade (ex.: Blazor `/_blazor`) pelo túnel.
 
@@ -8,11 +8,11 @@ Self-hosted WebSocket tunnel relay. Expose a local port through your own server 
 Internet ──► your server (tunnel.example.com:443)
                 │
                 ▼  (reverse proxy to 127.0.0.1)
-         bifrost serve :9001
+         sig3tunnel serve :9001
                 │
                 │  WebSocket (Bearer token)
                 │
-         bifrost connect (your machine)
+         sig3tunnel connect (your machine)
                 │
                 │  HTTP
                 │
@@ -21,12 +21,12 @@ Internet ──► your server (tunnel.example.com:443)
 
 Single dependency (`ws`). Requires Node.js 18+.
 
-![bifrost demo](demo.gif)
+![sig3tunnel demo](demo.gif)
 
 ## Installation
 
 ```bash
-npm install -g @avelor/bifrost
+npm install -g sig3-tunnel
 ```
 
 ## Quick start
@@ -35,24 +35,24 @@ npm install -g @avelor/bifrost
 
 ```bash
 # Issue a token
-bifrost token issue --global
+sig3tunnel token issue --global
 #
 #   id:     a1b2c3d4
 #   scope:  global
 #   token:  bf_...
 #
 #   → run on your machine:
-#   bifrost use <endpoint> bf_...
+#   sig3tunnel use <endpoint> bf_...
 
 # Start the relay
-bifrost serve --port 9001 --host 127.0.0.1 --daemon
+sig3tunnel serve --port 9001 --host 127.0.0.1 --daemon
 ```
 
 **On your machine:**
 
 ```bash
-bifrost use wss://tunnel.example.com bf_...
-bifrost connect 3000
+sig3tunnel use wss://tunnel.example.com bf_...
+sig3tunnel connect 3000
 ```
 
 Your local port 3000 is now reachable at `tunnel.example.com`.
@@ -63,9 +63,9 @@ Your local port 3000 is now reachable at `tunnel.example.com`.
 
 | Command | Description |
 |---|---|
-| `bifrost serve [--port N] [--host H] [--daemon]` | Start the relay |
-| `bifrost stop` | Stop the daemon |
-| `bifrost status` | Daemon status |
+| `sig3tunnel serve [--port N] [--host H] [--daemon]` | Start the relay |
+| `sig3tunnel stop` | Stop the daemon |
+| `sig3tunnel status` | Daemon status |
 
 `--host` defaults to `0.0.0.0`. When running behind a reverse proxy, pass `--host 127.0.0.1` to prevent direct access to the relay port.
 
@@ -73,21 +73,21 @@ Your local port 3000 is now reachable at `tunnel.example.com`.
 
 | Command | Description |
 |---|---|
-| `bifrost token issue --scope <name>` | Token scoped to one subdomain |
-| `bifrost token issue --global` | Token valid for all subdomains |
-| `bifrost token list` | List active tokens (no raw values) |
-| `bifrost token revoke <id>` | Revoke a token by id |
+| `sig3tunnel token issue --scope <name>` | Token scoped to one subdomain |
+| `sig3tunnel token issue --global` | Token valid for all subdomains |
+| `sig3tunnel token list` | List active tokens (no raw values) |
+| `sig3tunnel token revoke <id>` | Revoke a token by id |
 
-`bifrost token issue` without a flag is an error — the scope must be explicit.
+`sig3tunnel token issue` without a flag is an error — the scope must be explicit.
 
 ### Client
 
 | Command | Description |
 |---|---|
-| `bifrost use <endpoint> <token>` | Save endpoint and token to `~/.config/bifrost/` |
-| `bifrost connect <port>` | Expose localhost:<port> through the relay |
-| `bifrost connect <port> --name <name>` | Use a specific subdomain |
-| `bifrost connect <port> --run "cmd"` | Start a process and tunnel it |
+| `sig3tunnel use <endpoint> <token>` | Save endpoint and token to `~/.config/sig3tunnel/` |
+| `sig3tunnel connect <port>` | Expose localhost:<port> through the relay |
+| `sig3tunnel connect <port> --name <name>` | Use a specific subdomain |
+| `sig3tunnel connect <port> --run "cmd"` | Start a process and tunnel it |
 
 ## Deploying the relay
 
@@ -128,7 +128,7 @@ server {
     RewriteEngine On
     RewriteCond %{HTTP:Upgrade} websocket [NC]
     RewriteCond %{HTTP:Connection} upgrade [NC]
-    RewriteRule ^/_bifrost ws://127.0.0.1:9001/_bifrost [P,L]
+    RewriteRule ^/_sig3 ws://127.0.0.1:9001/_sig3 [P,L]
 
     ProxyPass        / http://127.0.0.1:9001/
     ProxyPassReverse / http://127.0.0.1:9001/
@@ -139,15 +139,15 @@ server {
 ### systemd service
 
 ```ini
-# /etc/systemd/system/bifrost.service
+# /etc/systemd/system/sig3tunnel.service
 [Unit]
-Description=Bifrost Relay
+Description=Sig3.Tunnel Relay
 After=network.target
 
 [Service]
 Type=simple
 User=www-data
-ExecStart=bifrost serve --port 9001 --host 127.0.0.1
+ExecStart=sig3tunnel serve --port 9001 --host 127.0.0.1
 Restart=on-failure
 RestartSec=5
 
@@ -156,20 +156,20 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-systemctl enable --now bifrost
-curl https://tunnel.example.com/_bifrost/ping  # → ok
+systemctl enable --now sig3tunnel
+curl https://tunnel.example.com/_sig3/ping  # → ok
 ```
 
 ## Token management
 
-Tokens are stored in `~/.config/bifrost/tokens.json` on the server. Raw values are shown once at issuance and never stored — only the SHA-256 hash is kept.
+Tokens are stored in `~/.config/sig3tunnel/tokens.json` on the server. Raw values are shown once at issuance and never stored — only the SHA-256 hash is kept.
 
 ### Subdomain routing
 
 A token issued with `--scope preview` can only connect as `preview.tunnel.example.com`. A global token can connect under any name. The scope is validated on every WebSocket handshake.
 
 ```bash
-bifrost connect 3000 --name preview
+sig3tunnel connect 3000 --name preview
 # → tunnel active → https://preview.tunnel.example.com
 ```
 
@@ -189,19 +189,19 @@ Retries reset to zero on each successful connection. Reconnection stops only if 
 
 ## Config files
 
-All files live under `~/.config/bifrost/`:
+All files live under `~/.config/sig3tunnel/`:
 
 | File | Purpose |
 |------|---------|
 | `config.json` | Client config: `endpoint` and `token` |
 | `tokens.json` | Server token store (hashed) |
-| `bifrost.pid` | Daemon PID |
-| `bifrost.log` | Daemon stdout/stderr |
+| `sig3tunnel.pid` | Daemon PID |
+| `sig3tunnel.log` | Daemon stdout/stderr |
 
 ## How it works
 
 1. The relay starts an HTTP + WebSocket server on the configured port.
-2. The client connects to `/_bifrost` (or `/_bifrost/<name>`) via WebSocket with a Bearer token.
+2. The client connects to `/_sig3` (or `/_sig3/<name>`) via WebSocket with a Bearer token.
 3. The relay validates the token and its scope against the requested tunnel name.
 4. Incoming HTTP requests are serialized (method, URL, headers, base64 body) and forwarded to the client over the WebSocket.
 5. The client forwards them to `localhost:<port>` and sends the response back.

@@ -94,13 +94,13 @@ function buildPublicUrl(relayBase, name) {
 }
 
 async function connect(cfg, rawPort, args) {
-  if (!rawPort) fatal('usage: bifrost connect <port> [--name <name>] [--run "command"]');
+  if (!rawPort) fatal('usage: sig3tunnel connect <port> [--name <name>] [--run "command"]');
 
   const port = parseInt(rawPort, 10);
   if (isNaN(port) || port < 1 || port > 65535) fatal('invalid port: ' + rawPort);
 
   const { endpoint, token } = cfg;
-  const relayBase = endpoint.replace(/\/_bifrost$/, '');
+  const relayBase = endpoint.replace(/\/_sig3$/, '');
 
   const nameIdx = args.indexOf('--name');
   const name    = nameIdx !== -1 ? args[nameIdx + 1] : null;
@@ -109,8 +109,8 @@ async function connect(cfg, rawPort, args) {
   }
 
   const relayUrl = name
-    ? `${relayBase}/_bifrost/${name.toLowerCase()}`
-    : `${relayBase}/_bifrost`;
+    ? `${relayBase}/_sig3/${name.toLowerCase()}`
+    : `${relayBase}/_sig3`;
 
   const runIdx = args.indexOf('--run');
   const runCmd = runIdx !== -1 ? args[runIdx + 1] : null;

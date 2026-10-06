@@ -1,8 +1,8 @@
 node_modules/
 
 *.log
-bifrost.pid
-bifrost.log
+sig3tunnel.pid
+sig3tunnel.log
 
 .config/
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
-DEMO_DIR=/tmp/bifrost-demo
+DEMO_DIR=/tmp/sig3tunnel-demo
 BFCFG="$DEMO_DIR/cfg"
-export PATH="/Users/christianecg/dev/personal/avelor_bifrost/bin:/Users/christianecg/.n/bin:/opt/homebrew/bin:/usr/bin:/bin"
+export PATH="/Users/christianecg/dev/personal/avelor_sig3/bin:/Users/christianecg/.n/bin:/opt/homebrew/bin:/usr/bin:/bin"
 
 # Kill leftovers from prior runs
 if [ -f "$DEMO_DIR/relay.pid" ]; then
@@ -27,16 +27,16 @@ http.createServer((req, res) => {
 echo $! > "$DEMO_DIR/server.pid"
 
 # Start relay in background
-BIFROST_CONFIG_DIR="$BFCFG" bifrost serve --port 9001 > /dev/null 2>&1 &
+SIG3TUNNEL_CONFIG_DIR="$BFCFG" sig3tunnel serve --port 9001 > /dev/null 2>&1 &
 echo $! > "$DEMO_DIR/relay.pid"
 sleep 0.8
 
 # Issue token, strip ANSI codes, capture raw value
-OUT=$(BIFROST_CONFIG_DIR="$BFCFG" bifrost token issue --global 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+OUT=$(SIG3TUNNEL_CONFIG_DIR="$BFCFG" sig3tunnel token issue --global 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
 RAW=$(echo "$OUT" | grep 'token:' | awk '{print $2}' | tr -d '[:space:]')
 
 # Save client config
-BIFROST_CONFIG_DIR="$BFCFG" bifrost use ws://localhost:9001 "$RAW" > /dev/null
+SIG3TUNNEL_CONFIG_DIR="$BFCFG" sig3tunnel use ws://localhost:9001 "$RAW" > /dev/null
 
 # Pre-schedule curls to fire after connect has time to establish
 (sleep 4 && \
@@ -46,4 +46,4 @@ BIFROST_CONFIG_DIR="$BFCFG" bifrost use ws://localhost:9001 "$RAW" > /dev/null
   sleep 1 && \
   curl -s http://localhost:9001/api/users > /dev/null) &
 
-export BIFROST_CONFIG_DIR="$BFCFG"
+export SIG3TUNNEL_CONFIG_DIR="$BFCFG"

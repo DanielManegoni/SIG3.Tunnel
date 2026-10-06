@@ -57,14 +57,14 @@ function htmlPage(code, message) {
 <body>
   <span class="code">${code}</span>
   <p class="message">${message}</p>
-  <footer>Avelor · bifrost</footer>
+  <footer>Avelor · sig3tunnel</footer>
 </body>
 </html>
 `;
 }
 
 function jsonPage(code, message) {
-  return JSON.stringify({ code, message, source: '@avelor/bifrost' }, null, 2) + '\n';
+  return JSON.stringify({ code, message, source: 'sig3-tunnel' }, null, 2) + '\n';
 }
 
 function xmlPage(code, message) {
@@ -78,12 +78,12 @@ function xmlPage(code, message) {
   <code>${code}</code>
   <message>${msg}</message>
 </error>
-<!-- Avelor · bifrost -->
+<!-- Avelor · sig3tunnel -->
 `;
 }
 
 function textPage(code, message) {
-  return `${code} ${message}\n\n— Avelor · bifrost\n`;
+  return `${code} ${message}\n\n— Avelor · sig3tunnel\n`;
 }
 
 // Detect preferred format from URL extension first, then Accept header.

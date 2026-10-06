@@ -1,10 +1,10 @@
 {
-  "name": "@avelor/bifrost",
+  "name": "sig3-tunnel",
   "version": "0.1.2",
   "description": "WebSocket tunnel relay — serve from a server, connect from anywhere",
   "main": "src/relay.js",
   "bin": {
-    "bifrost": "./bin/bifrost.js"
+    "sig3tunnel": "./bin/sig3tunnel.js"
   },
   "files": [
     "bin",
@@ -12,7 +12,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "start": "node bin/bifrost.js",
+    "start": "node bin/sig3tunnel.js",
     "test": "node --test test/tokens.test.js test/config.test.js test/relay.test.js test/upgrade.test.js test/cli.test.js"
   },
   "dependencies": {
@@ -33,10 +33,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/DanielManegoni/bifrost-tunnel"
+    "url": "https://github.com/DanielManegoni/Sig3.Tunnel"
   },
-  "homepage": "https://github.com/DanielManegoni/bifrost-tunnel#readme",
+  "homepage": "https://github.com/DanielManegoni/Sig3.Tunnel#readme",
   "bugs": {
-    "url": "https://github.com/DanielManegoni/bifrost-tunnel/issues"
+    "url": "https://github.com/DanielManegoni/Sig3.Tunnel/issues"
   }
 }

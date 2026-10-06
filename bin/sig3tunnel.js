@@ -9,7 +9,7 @@ const relay   = require('../src/relay');
 const client  = require('../src/client');
 
 const USAGE = `
-${G}bifrost${Z} — self-hosted WebSocket tunnel relay
+${G}sig3tunnel${Z} — self-hosted WebSocket tunnel relay
 
 ${G}server:${Z}
   ${W}serve${Z} [--port 9001] [--host 0.0.0.0] [--daemon]    start the relay
@@ -23,12 +23,12 @@ ${G}tokens:${Z}
   ${W}token revoke${Z} <id>                 revoke a token
 
 ${G}client:${Z}
-  ${W}use${Z} <endpoint> <token>            save endpoint and token to ~/.config/bifrost/
+  ${W}use${Z} <endpoint> <token>            save endpoint and token to ~/.config/sig3tunnel/
   ${W}connect${Z} <port>                    expose localhost:<port> through the relay
   ${W}connect${Z} <port> --name <name>      use a specific subdomain
   ${W}connect${Z} <port> --run "cmd"        start a process and tunnel it
 
-${G}config:${Z} ~/.config/bifrost/config.json
+${G}config:${Z} ~/.config/sig3tunnel/config.json
 `;
 
 function parseFlags(args) {
@@ -64,7 +64,7 @@ function parseFlags(args) {
       const port  = parseInt(flags.port || process.env.PORT || '9001', 10);
       const host  = flags.host || process.env.HOST || '0.0.0.0';
 
-      if (flags.daemon && !process.env.BIFROST_DAEMON) {
+      if (flags.daemon && !process.env.SIG3TUNNEL_DAEMON) {
         daemon.start(process.argv.slice(1));
         break;
       }
@@ -86,8 +86,8 @@ function parseFlags(args) {
 
           if (!flags.scope && !flags.global) {
             fatal('specify the token scope:\n' +
-              '  bifrost token issue --scope <subdomain>\n' +
-              '  bifrost token issue --global');
+              '  sig3tunnel token issue --scope <subdomain>\n' +
+              '  sig3tunnel token issue --global');
           }
 
           const scope  = flags.global ? '*' : flags.scope.toLowerCase();
@@ -100,7 +100,7 @@ function parseFlags(args) {
           process.stdout.write(G + '  token:  ' + Z + W + result.raw + Z + '\n');
           process.stdout.write('\n');
           process.stdout.write(G + '  → run on your machine:\n' + Z);
-          process.stdout.write('  ' + W + `bifrost use <endpoint> ${result.raw}` + Z + '\n\n');
+          process.stdout.write('  ' + W + `sig3tunnel use <endpoint> ${result.raw}` + Z + '\n\n');
           break;
         }
 
@@ -129,14 +129,14 @@ function parseFlags(args) {
 
         case 'revoke': {
           const id = sub === 'revoke' ? rest[0] : null;
-          if (!id) fatal('usage: bifrost token revoke <id>');
+          if (!id) fatal('usage: sig3tunnel token revoke <id>');
           if (tokens.revoke(id)) ok('token ' + id + ' revoked');
           else fatal('token not found: ' + id);
           break;
         }
 
         default:
-          fatal('unknown subcommand: token ' + (sub || '') + '\n  run: bifrost help');
+          fatal('unknown subcommand: token ' + (sub || '') + '\n  run: sig3tunnel help');
       }
       break;
     }
@@ -145,10 +145,10 @@ function parseFlags(args) {
     case 'use': {
       const endpoint = sub;
       const token    = rest[0];
-      if (!endpoint || !token) fatal('usage: bifrost use <endpoint> <token>');
+      if (!endpoint || !token) fatal('usage: sig3tunnel use <endpoint> <token>');
 
       writeConfig({ endpoint, token });
-      ok('saved to ~/.config/bifrost/config.json');
+      ok('saved to ~/.config/sig3tunnel/config.json');
       break;
     }
 
@@ -161,6 +161,6 @@ function parseFlags(args) {
     }
 
     default:
-      fatal('unknown command: ' + cmd + '\n  run: bifrost help');
+      fatal('unknown command: ' + cmd + '\n  run: sig3tunnel help');
   }
 })();

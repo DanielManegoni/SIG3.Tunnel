@@ -7,15 +7,15 @@ const os         = require('node:os');
 const fs         = require('node:fs');
 const path       = require('node:path');
 
-const BIN = path.join(__dirname, '..', 'bin', 'bifrost.js');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-cli-'));
+const BIN = path.join(__dirname, '..', 'bin', 'sig3tunnel.js');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-cli-'));
 
 function run(args, extraEnv = {}) {
   return new Promise(resolve => {
     execFile(
       process.execPath,
       [BIN, ...args],
-      { env: { ...process.env, BIFROST_CONFIG_DIR: tmp, ...extraEnv } },
+      { env: { ...process.env, SIG3TUNNEL_CONFIG_DIR: tmp, ...extraEnv } },
       (err, stdout, stderr) => resolve({ code: err?.code ?? 0, stdout, stderr }),
     );
   });
@@ -26,7 +26,7 @@ function run(args, extraEnv = {}) {
 test('no args prints usage and exits 0', async () => {
   const { code, stdout } = await run([]);
   assert.equal(code, 0);
-  assert.ok(stdout.includes('bifrost'));
+  assert.ok(stdout.includes('sig3tunnel'));
   assert.ok(stdout.includes('serve'));
 });
 
@@ -90,11 +90,11 @@ test('use without args exits 1', async () => {
 });
 
 test('connect without saved config exits 1', async () => {
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-nocfg-'));
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-nocfg-'));
   try {
-    const { code, stderr } = await run(['connect', '3000'], { BIFROST_CONFIG_DIR: empty });
+    const { code, stderr } = await run(['connect', '3000'], { SIG3TUNNEL_CONFIG_DIR: empty });
     assert.equal(code, 1);
-    assert.ok(stderr.includes('bifrost use'));
+    assert.ok(stderr.includes('sig3tunnel use'));
   } finally {
     fs.rmSync(empty, { recursive: true, force: true });
   }
@@ -144,9 +144,9 @@ test('token revoke unknown id exits 1', async () => {
 // ── use ───────────────────────────────────────────────────────────────────────
 
 test('use saves endpoint and token to config', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-use-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-use-'));
   try {
-    const { code, stdout } = await run(['use', 'wss://example.com', 'bf_mytoken'], { BIFROST_CONFIG_DIR: dir });
+    const { code, stdout } = await run(['use', 'wss://example.com', 'bf_mytoken'], { SIG3TUNNEL_CONFIG_DIR: dir });
     assert.equal(code, 0);
     assert.ok(stdout.includes('saved'));
     const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));

@@ -20,7 +20,7 @@ function writeConfig(data) {
 function requireConfig() {
   const cfg = readConfig();
   if (!cfg.endpoint || !cfg.token) {
-    fatal('not configured. Run:\n  bifrost use <endpoint> <token>');
+    fatal('not configured. Run:\n  sig3tunnel use <endpoint> <token>');
   }
   return cfg;
 }

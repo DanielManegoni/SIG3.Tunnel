@@ -8,8 +8,8 @@ const fs     = require('node:fs');
 const path   = require('node:path');
 const WebSocket = require('ws');
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-relay-'));
-process.env.BIFROST_CONFIG_DIR = tmp;
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-relay-'));
+process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
 
 const { serve } = require('../src/relay');
 const tokens    = require('../src/tokens');
@@ -71,8 +71,8 @@ after(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-test('/_bifrost/ping returns ok', async () => {
-  const r = await httpGet(relayPort, { path: '/_bifrost/ping' });
+test('/_sig3/ping returns ok', async () => {
+  const r = await httpGet(relayPort, { path: '/_sig3/ping' });
   assert.equal(r.status, 200);
   assert.equal(r.body, 'ok');
 });
@@ -86,13 +86,13 @@ test('GET / on root domain with no default tunnel returns splash page', async ()
   const r = await httpGet(relayPort, { path: '/', headers: { host: 'tunnel.example.com' } });
   assert.equal(r.status, 200);
   assert.ok(r.headers['content-type'].includes('text/html'));
-  assert.ok(r.body.includes('bifrost'));
+  assert.ok(r.body.includes('sig3tunnel'));
   assert.ok(r.body.includes('relay running'));
 });
 
 test('relay rejects connection with invalid token', async () => {
   await new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/_bifrost`, {
+    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/_sig3`, {
       headers: { authorization: 'Bearer bf_invalid' },
     });
     ws.once('close', (code) => {
@@ -105,7 +105,7 @@ test('relay rejects connection with invalid token', async () => {
 
 test('relay rejects connection with mismatched scope', async () => {
   await new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/_bifrost/staging`, {
+    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/_sig3/staging`, {
       headers: { authorization: `Bearer ${scopedToken.raw}` },
     });
     ws.once('close', (code) => {
@@ -117,7 +117,7 @@ test('relay rejects connection with mismatched scope', async () => {
 });
 
 test('relay forwards HTTP request to connected client and returns response', async () => {
-  const ws = await openTunnel('/_bifrost', globalToken.raw, req => ({
+  const ws = await openTunnel('/_sig3', globalToken.raw, req => ({
     status: 200,
     headers: { 'content-type': 'text/plain' },
     body: Buffer.from('hello from tunnel').toString('base64'),
@@ -135,7 +135,7 @@ test('relay forwards HTTP request to connected client and returns response', asy
 
 test('relay echoes request method and URL to client', async () => {
   let received;
-  const ws = await openTunnel('/_bifrost', globalToken.raw, req => {
+  const ws = await openTunnel('/_sig3', globalToken.raw, req => {
     received = req;
     return { status: 204, headers: {}, body: '' };
   });
@@ -152,7 +152,7 @@ test('relay echoes request method and URL to client', async () => {
 });
 
 test('relay responds 502 to in-flight requests when client disconnects', async () => {
-  const ws = await openTunnel('/_bifrost', globalToken.raw, () =>
+  const ws = await openTunnel('/_sig3', globalToken.raw, () =>
     new Promise(() => { /* never responds */ }),
   );
 
@@ -167,7 +167,7 @@ test('relay responds 502 to in-flight requests when client disconnects', async (
 });
 
 test('scoped token connects to matching path', async () => {
-  const ws = await openTunnel('/_bifrost/preview', scopedToken.raw, req => ({
+  const ws = await openTunnel('/_sig3/preview', scopedToken.raw, req => ({
     status: 200,
     headers: { 'content-type': 'text/plain' },
     body: Buffer.from('scoped').toString('base64'),
@@ -188,11 +188,11 @@ test('scoped token connects to matching path', async () => {
 });
 
 test('relay rejects duplicate tunnel name', async () => {
-  const ws1 = await openTunnel('/_bifrost', globalToken.raw, () => ({ status: 200, headers: {}, body: '' }));
+  const ws1 = await openTunnel('/_sig3', globalToken.raw, () => ({ status: 200, headers: {}, body: '' }));
 
   try {
     await new Promise((resolve, reject) => {
-      const ws2 = new WebSocket(`ws://127.0.0.1:${relayPort}/_bifrost`, {
+      const ws2 = new WebSocket(`ws://127.0.0.1:${relayPort}/_sig3`, {
         headers: { authorization: `Bearer ${globalToken.raw}` },
       });
       ws2.once('close', (code) => {
@@ -209,7 +209,7 @@ test('relay rejects duplicate tunnel name', async () => {
 
 test('relay adds X-Forwarded headers for reverse proxy compat (Next.js hydration)', async () => {
   let receivedHeaders;
-  const ws = await openTunnel('/_bifrost/myapp', globalToken.raw, req => {
+  const ws = await openTunnel('/_sig3/myapp', globalToken.raw, req => {
     receivedHeaders = req.headers;
     return { status: 200, headers: {}, body: '' };
   });
@@ -219,9 +219,9 @@ test('relay adds X-Forwarded headers for reverse proxy compat (Next.js hydration
       path: '/test-page',
       headers: { host: 'myapp.tunnel.example.com' },
     });
-    // Bifrost should preserve the original host in x-forwarded-host
+    // Sig3.Tunnel should preserve the original host in x-forwarded-host
     assert.equal(receivedHeaders['x-forwarded-host'], 'myapp.tunnel.example.com');
-    // Bifrost should set x-forwarded-proto (defaults to https for security)
+    // Sig3.Tunnel should set x-forwarded-proto (defaults to https for security)
     assert.equal(receivedHeaders['x-forwarded-proto'], 'https');
     // Client will later change Host to localhost:PORT, but these headers persist
     // so Next.js can determine the real origin without code changes

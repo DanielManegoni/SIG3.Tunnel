@@ -18,7 +18,7 @@ function splashPage() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>bifrost</title>
+  <title>sig3tunnel</title>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { height: 100%; }
@@ -59,10 +59,10 @@ function splashPage() {
   </style>
 </head>
 <body>
-  <h1>bifrost</h1>
+  <h1>sig3tunnel</h1>
   <p class="meta">relay running &middot; v${VERSION}</p>
-  <p class="ping"><a href="/_bifrost/ping" style="color:inherit;text-decoration:none;">/_bifrost/ping</a></p>
-  <footer>Avelor &middot; bifrost</footer>
+  <p class="ping"><a href="/_sig3/ping" style="color:inherit;text-decoration:none;">/_sig3/ping</a></p>
+  <footer>Sig3.Tunnel</footer>
 </body>
 </html>
 `;
@@ -75,7 +75,7 @@ const queue    = new Map(); // requestId → { res, timer, peerName }
 const upgrades = new Map(); // upgradeId → { socket, peerName }
 
 function nameFromPath(path) {
-  const m = (path || '').match(/^\/_bifrost\/([a-z0-9][a-z0-9-]{0,62})$/i);
+  const m = (path || '').match(/^\/_sig3\/([a-z0-9][a-z0-9-]{0,62})$/i);
   return m ? m[1].toLowerCase() : 'default';
 }
 
@@ -139,7 +139,7 @@ function tunnelUpgrade(req, socket, head) {
 
 function serve(port, host) {
   const server = http.createServer((req, res) => {
-    if (req.url === '/_bifrost/ping') {
+    if (req.url === '/_sig3/ping') {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('ok');
       return;
@@ -221,7 +221,7 @@ function serve(port, host) {
 
   server.on('upgrade', (req, socket, head) => {
     const path = req.url || '';
-    if (path === '/_bifrost' || /^\/_bifrost\/[a-z0-9][a-z0-9-]{0,62}$/i.test(path)) {
+    if (path === '/_sig3' || /^\/_sig3\/[a-z0-9][a-z0-9-]{0,62}$/i.test(path)) {
       wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
     } else {
       tunnelUpgrade(req, socket, head);
@@ -232,7 +232,7 @@ function serve(port, host) {
   setInterval(() => {
     for (const [name, ws] of peers) {
       if (ws._pingPending) {
-        console.log(`[bifrost] "${name}" ping timeout, terminating`);
+        console.log(`[sig3tunnel] "${name}" ping timeout, terminating`);
         ws.terminate();
         continue;
       }
@@ -246,9 +246,9 @@ function serve(port, host) {
     const token = raw.startsWith('Bearer ') ? raw.slice(7) : null;
 
     const rawPath  = req.url || '';
-    const isDefault = rawPath === '/_bifrost';
+    const isDefault = rawPath === '/_sig3';
 
-    if (!isDefault && !/^\/_bifrost\/[a-z0-9][a-z0-9-]{0,62}$/i.test(rawPath)) {
+    if (!isDefault && !/^\/_sig3\/[a-z0-9][a-z0-9-]{0,62}$/i.test(rawPath)) {
       ws.close(1008, 'invalid path');
       return;
     }
@@ -269,7 +269,7 @@ function serve(port, host) {
     ws.on('pong', () => { ws._pingPending = false; });
 
     peers.set(name, ws);
-    console.log(`[bifrost] "${name}" connected from ${req.socket.remoteAddress}`);
+    console.log(`[sig3tunnel] "${name}" connected from ${req.socket.remoteAddress}`);
 
     ws.on('message', raw => {
       let msg;
@@ -303,7 +303,7 @@ function serve(port, host) {
 
     ws.on('close', () => {
       peers.delete(name);
-      console.log(`[bifrost] "${name}" disconnected`);
+      console.log(`[sig3tunnel] "${name}" disconnected`);
       for (const [id, entry] of queue) {
         if (entry.peerName !== name) continue;
         clearTimeout(entry.timer);
@@ -317,11 +317,11 @@ function serve(port, host) {
       }
     });
 
-    ws.on('error', err => console.error(`[bifrost] "${name}" error:`, err.message));
+    ws.on('error', err => console.error(`[sig3tunnel] "${name}" error:`, err.message));
   });
 
   server.listen(port, host, () => {
-    console.log(`[bifrost] relay listening on ${host}:${port}`);
+    console.log(`[sig3tunnel] relay listening on ${host}:${port}`);
   });
 
   return server;

@@ -8,8 +8,8 @@ const fs     = require('node:fs');
 const path   = require('node:path');
 const WebSocket = require('ws');
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-upgrade-'));
-process.env.BIFROST_CONFIG_DIR = tmp;
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-upgrade-'));
+process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
 
 const { serve }        = require('../src/relay');
 const { openUpgrade }  = require('../src/client');
@@ -38,10 +38,10 @@ function startEcho() {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-// Tunnel client (what `bifrost connect` runs), pointed at the echo server.
+// Tunnel client (what `sig3tunnel connect` runs), pointed at the echo server.
 function openPeer(relayTok) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/_bifrost/echo`, {
+    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/_sig3/echo`, {
       headers: { authorization: `Bearer ${relayTok}` },
     });
     const sockets = new Map();

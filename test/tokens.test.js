@@ -6,8 +6,8 @@ const os     = require('node:os');
 const fs     = require('node:fs');
 const path   = require('node:path');
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-tokens-'));
-process.env.BIFROST_CONFIG_DIR = tmp;
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-tokens-'));
+process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
 
 const tokens = require('../src/tokens');
 

@@ -6,8 +6,8 @@ const os     = require('node:os');
 const fs     = require('node:fs');
 const path   = require('node:path');
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-config-'));
-process.env.BIFROST_CONFIG_DIR = tmp;
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-config-'));
+process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
 
 const { readConfig, writeConfig, requireConfig } = require('../src/config');
 
@@ -43,16 +43,16 @@ test('requireConfig returns config when endpoint and token present', () => {
 
 test('requireConfig exits 1 when config missing', async () => {
   const { execFile } = require('node:child_process');
-  const BIN = path.join(__dirname, '..', 'bin', 'bifrost.js');
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'bifrost-empty-'));
+  const BIN = path.join(__dirname, '..', 'bin', 'sig3tunnel.js');
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-empty-'));
   try {
     await new Promise((resolve, reject) => {
       execFile(process.execPath, [BIN, 'connect', '3000'],
-        { env: { ...process.env, BIFROST_CONFIG_DIR: empty } },
+        { env: { ...process.env, SIG3TUNNEL_CONFIG_DIR: empty } },
         (err, _stdout, stderr) => {
           if (!err) return reject(new Error('expected non-zero exit'));
           assert.equal(err.code, 1);
-          assert.ok(stderr.includes('bifrost use'));
+          assert.ok(stderr.includes('sig3tunnel use'));
           resolve();
         });
     });

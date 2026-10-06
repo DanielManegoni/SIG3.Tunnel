@@ -36,7 +36,7 @@ function start(argv) {
   const child = spawn(process.execPath, args, {
     detached: true,
     stdio:    ['ignore', log, log],
-    env:      { ...process.env, BIFROST_DAEMON: '1' },
+    env:      { ...process.env, SIG3TUNNEL_DAEMON: '1' },
   });
 
   child.unref();
@@ -60,9 +60,9 @@ function stop() {
 function status() {
   const pid = readPid();
   if (!pid || !isAlive(pid)) {
-    process.stdout.write(R + '●' + Z + ' bifrost   ' + G + 'stopped\n' + Z);
+    process.stdout.write(R + '●' + Z + ' sig3tunnel   ' + G + 'stopped\n' + Z);
   } else {
-    process.stdout.write(GR + '●' + Z + ' bifrost   ' + W + 'running' + Z + G + ' (PID ' + pid + ')\n' + Z);
+    process.stdout.write(GR + '●' + Z + ' sig3tunnel   ' + W + 'running' + Z + G + ' (PID ' + pid + ')\n' + Z);
     process.stdout.write(G + '  logs: ' + Z + LOG_FILE + '\n');
   }
 }
