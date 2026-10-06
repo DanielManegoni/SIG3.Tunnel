@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SIG3.Tunnel - pedidos</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; color: #111; }
+    h1 { font-size: 20px; margin: 0 0 16px; }
+    .login, .lista { max-width: 960px; }
+    input { padding: 6px 8px; font-size: 14px; }
+    button { padding: 6px 12px; font-size: 14px; cursor: pointer; margin-right: 6px; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 12px; }
+    th, td { border-bottom: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+    th { background: #f5f5f5; }
+    .erro { color: #b00020; margin-top: 8px; }
+    .vazio { color: #666; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="login" id="login">
+    <h1>SIG3.Tunnel - pedidos</h1>
+    <form id="form-login">
+      <input id="senha" type="password" placeholder="Senha de admin" autocomplete="current-password" required>
+      <button type="submit">Entrar</button>
+    </form>
+    <div class="erro" id="erro-login"></div>
+  </div>
+
+  <div class="lista" id="lista" hidden>
+    <h1>Pedidos</h1>
+    <button type="button" id="atualizar">Atualizar</button>
+    <button type="button" id="sair">Sair</button>
+    <div class="erro" id="erro-lista"></div>
+    <table>
+      <thead>
+        <tr><th>Código</th><th>Descrição</th><th>IP</th><th>Criado</th><th>Status</th><th>Liberado por</th><th></th></tr>
+      </thead>
+      <tbody id="corpo"></tbody>
+    </table>
+    <div class="vazio" id="vazio" hidden>Nenhum pedido.</div>
+  </div>
+
+  <script>
+    // A senha fica só nesta variável: some ao fechar a aba. Nada é gravado no navegador.
+    let senha = '';
+
+    const $ = id => document.getElementById(id);
+
+    async function chamar(metodo, caminho, corpo) {
+      const resp = await fetch(caminho, {
+        method: metodo,
+        headers: { 'X-Admin-Senha': senha, 'Content-Type': 'application/json' },
+        body: corpo ? JSON.stringify(corpo) : undefined,
+      });
+      const dados = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(dados.mensagem || dados.erro || `Erro ${resp.status}`);
+      return dados;
+    }
+
+    function escapar(texto) {
+      return String(texto ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function data(iso) {
+      return iso ? new Date(iso).toLocaleString('pt-BR') : '';
+    }
+
+    async function carregar() {
+      $('erro-lista').textContent = '';
+      try {
+        const pedidos = await chamar('GET', '/api/admin/pedidos');
+        pedidos.sort((a, b) => (b.criado || '').localeCompare(a.criado || ''));
+        $('corpo').innerHTML = pedidos.map(p => `
+          <tr>
+            <td><strong>${escapar(p.codigo)}</strong></td>
+            <td>${escapar(p.descricao)}</td>
+            <td>${escapar(p.ip)}</td>
+            <td>${escapar(data(p.criado))}</td>
+            <td>${escapar(p.status)}</td>
+            <td>${escapar(p.liberadoPor)}</td>
+            <td>${p.status === 'pendente'
+              ? `<button data-acao="aprovar" data-id="${escapar(p.id)}">Aprovar</button>` +
+                `<button data-acao="recusar" data-id="${escapar(p.id)}">Recusar</button>`
+              : ''}</td>
+          </tr>`).join('');
+        $('vazio').hidden = pedidos.length > 0;
+      } catch (e) {
+        $('erro-lista').textContent = e.message;
+      }
+    }
+
+    $('form-login').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      $('erro-login').textContent = '';
+      senha = $('senha').value;
+      try {
+        await chamar('GET', '/api/admin/pedidos');   // confere a senha antes de mostrar a lista
+        $('login').hidden = true;
+        $('lista').hidden = false;
+        $('senha').value = '';
+        carregar();
+      } catch (e) {
+        senha = '';
+        $('erro-login').textContent = e.message === 'admin_negado' ? 'Senha incorreta.' : e.message;
+      }
+    });
+
+    $('corpo').addEventListener('click', async ev => {
+      const botao = ev.target.closest('button[data-acao]');
+      if (!botao) return;
+      botao.disabled = true;
+      try {
+        await chamar('POST', `/api/admin/pedidos/${botao.dataset.id}/${botao.dataset.acao}`,
+          botao.dataset.acao === 'aprovar' ? { liberadoPor: 'Admin (painel)' } : undefined);
+        await carregar();
+      } catch (e) {
+        $('erro-lista').textContent = e.message;
+        botao.disabled = false;
+      }
+    });
+
+    $('atualizar').addEventListener('click', carregar);
+    $('sair').addEventListener('click', () => { senha = ''; location.reload(); });
+  </script>
+</body>
+</html>

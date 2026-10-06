@@ -6,6 +6,11 @@ const { randomUUID }                 = require('crypto');
 const { validate }                   = require('./tokens');
 const { errorResponse }              = require('./errors');
 const { tratarApi }                  = require('./api');
+const fs                             = require('fs');
+const path                           = require('path');
+
+// Painel de pedidos (só no domínio raiz; um túnel com nome nunca serve o painel).
+const ADMIN_HTML = fs.readFileSync(path.join(__dirname, 'admin.html'));
 
 const MAX_QUEUE    = 256;
 const MAX_BODY     = 10 * 1024 * 1024; // 10 MB
@@ -142,6 +147,12 @@ function serve(port, host) {
   const server = http.createServer((req, res) => {
     if ((req.url || '').startsWith('/api/')) {
       tratarApi(req, res);
+      return;
+    }
+
+    if (req.method === 'GET' && (req.url === '/admin' || req.url === '/admin/') && nameFromHost(req.headers.host) === null) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(ADMIN_HTML);
       return;
     }
 
