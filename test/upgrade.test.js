@@ -46,7 +46,9 @@ function openPeer(relayTok) {
     });
     const sockets = new Map();
     const send = obj => ws.send(JSON.stringify(obj));
-    ws.on('message', raw => {
+    ws.on('message', (raw, isBinary) => {
+      // Bytes do navegador chegam como frame binário: 36 bytes de id + dados.
+      if (isBinary) return sockets.get(raw.subarray(0, 36).toString('ascii'))?.write(raw.subarray(36));
       const msg = JSON.parse(raw);
       if (msg.type === 'upgrade') return openUpgrade(echoPort, msg, send, sockets);
       if (msg.type === 'up-data') return sockets.get(msg.id)?.write(Buffer.from(msg.data, 'base64'));

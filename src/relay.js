@@ -129,9 +129,10 @@ function tunnelUpgrade(req, socket, head) {
     head:    head.length ? head.toString('base64') : '',
   }));
 
+  // Dados do upgrade vão como frame binário: 36 bytes do id (UUID ASCII) + os bytes crus. Sem base64.
   socket.on('data', chunk => {
     if (!upgrades.has(id)) return;
-    peer.send(JSON.stringify({ type: 'up-data', id, data: chunk.toString('base64') }));
+    peer.send(Buffer.concat([Buffer.from(id, 'ascii'), chunk]), { binary: true });
   });
 
   const finish = () => {
@@ -288,7 +289,15 @@ function serve(port, host) {
     peers.set(name, ws);
     console.log(`[sig3tunnel] "${name}" connected from ${req.socket.remoteAddress}`);
 
-    ws.on('message', raw => {
+    ws.on('message', (raw, isBinary) => {
+      // Frame binário do cliente: 36 bytes de id + dados do upgrade.
+      if (isBinary) {
+        if (raw.length < 36) return;
+        const up = upgrades.get(raw.subarray(0, 36).toString('ascii'));
+        if (up && up.peerName === name) up.socket.write(raw.subarray(36));
+        return;
+      }
+
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
 
