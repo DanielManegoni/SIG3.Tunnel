@@ -2,7 +2,7 @@
 
 // API de pedidos de nome (ver src/pedidos.js). Rotas em /api/.
 //
-//   POST /api/pedidos                       { dns, descricao, segredo }   -> 201 { id, status }
+//   POST /api/pedidos                       { descricao, segredo }        -> 201 { id, codigo, status }
 //   GET  /api/pedidos/<id>                  cabecalho X-Pedido-Segredo    -> { status, token? }
 //   GET  /api/admin/pedidos                 cabecalho X-Admin-Senha       -> lista
 //   POST /api/admin/pedidos/<id>/aprovar    cabecalho X-Admin-Senha
@@ -58,7 +58,7 @@ function adminOk(req) {
 const STATUS_DE_ERRO = {
   nao_encontrado:      404,
   segredo_errado:      403,
-  nome_em_uso:         409,
+  sem_codigo:          503,
   estado_invalido:     409,
   ja_entregue:         409,
   fila_cheia:          429,
@@ -71,7 +71,6 @@ async function tratarApi(req, res) {
     if (req.method === 'POST' && p === '/api/pedidos') {
       const corpo = await lerJson(req);
       const r = pedidos.criar({
-        dns: corpo.dns,
         descricao: corpo.descricao,
         segredo: corpo.segredo,
         ip: ipDe(req),
@@ -90,7 +89,9 @@ async function tratarApi(req, res) {
       if (req.method === 'GET' && p === '/api/admin/pedidos') return enviar(res, 200, pedidos.listar());
       m = p.match(/^\/api\/admin\/pedidos\/([0-9a-f]{16})\/(aprovar|recusar)$/);
       if (req.method === 'POST' && m) {
-        const r = m[2] === 'aprovar' ? pedidos.aprovar(m[1]) : pedidos.recusar(m[1]);
+        const r = m[2] === 'aprovar'
+          ? pedidos.aprovar(m[1], Date.now(), (await lerJson(req).catch(() => ({}))).liberadoPor)
+          : pedidos.recusar(m[1]);
         return enviar(res, 200, { id: r.id, status: r.status });
       }
     }
