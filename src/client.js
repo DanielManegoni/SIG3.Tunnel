@@ -1,6 +1,7 @@
 'use strict';
 
 const http           = require('http');
+const net            = require('net');
 const { spawn }      = require('child_process');
 const WebSocket      = require('ws');
 const { fatal, G, W, GR, Y, R, Z } = require('./fmt');
@@ -53,6 +54,32 @@ function forwardRequest(port, msg) {
     if (body) req.write(body);
     req.end();
   });
+}
+
+// Opens a raw TCP connection to localhost:<port> for one relayed WebSocket
+// upgrade, replays the original handshake request, and pipes bytes both ways.
+// `send` takes a message object; `sockets` is this tunnel connection's map.
+function openUpgrade(port, msg, send, sockets) {
+  const headers = { ...msg.headers, host: `localhost:${port}` };
+  delete headers['transfer-encoding'];
+
+  const sock = net.connect(port, '127.0.0.1');
+  sockets.set(msg.id, sock);
+
+  // net buffers writes until the connection opens, so the handshake goes first
+  // even when relayed bytes arrive before the local socket is connected.
+  const lines = Object.entries(headers).map(([k, v]) => `${k}: ${v}`);
+  sock.write(`${msg.method} ${msg.url} HTTP/1.1\r\n${lines.join('\r\n')}\r\n\r\n`);
+  if (msg.head) sock.write(Buffer.from(msg.head, 'base64'));
+
+  sock.on('data', chunk => send({ type: 'up-data', id: msg.id, data: chunk.toString('base64') }));
+
+  sock.on('close', () => {
+    if (!sockets.delete(msg.id)) return;
+    send({ type: 'up-close', id: msg.id });
+  });
+
+  sock.on('error', () => sock.destroy());
 }
 
 function buildPublicUrl(relayBase, name) {
@@ -129,6 +156,9 @@ async function connect(cfg, rawPort, args) {
     const ws = new WebSocket(relayUrl, { headers: { authorization: `Bearer ${token}` } });
     currentWs = ws;
 
+    const upgradeSockets = new Map(); // upgradeId → local net.Socket
+    const send = obj => ws.send(JSON.stringify(obj));
+
     ws.on('open', () => {
       retries = 0;
       const publicUrl = buildPublicUrl(relayBase, name);
@@ -138,6 +168,22 @@ async function connect(cfg, rawPort, args) {
     ws.on('message', async raw => {
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
+
+      if (msg.type === 'upgrade') {
+        process.stdout.write(G + new Date().toLocaleTimeString('en-US', { hour12: false }) + Z + '  ' + W + 'WS    ' + Z + ' ' + msg.url + '\n');
+        openUpgrade(port, msg, send, upgradeSockets);
+        return;
+      }
+      if (msg.type === 'up-data') {
+        upgradeSockets.get(msg.id)?.write(Buffer.from(msg.data, 'base64'));
+        return;
+      }
+      if (msg.type === 'up-close') {
+        // The browser is already gone, so tear the local socket down fully.
+        upgradeSockets.get(msg.id)?.destroy();
+        upgradeSockets.delete(msg.id);
+        return;
+      }
 
       const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
       process.stdout.write(G + ts + Z + '  ' + W + msg.method.padEnd(6) + Z + ' ' + msg.url + '\n');
@@ -155,6 +201,9 @@ async function connect(cfg, rawPort, args) {
     });
 
     ws.on('close', (code, reason) => {
+      for (const sock of upgradeSockets.values()) sock.destroy();
+      upgradeSockets.clear();
+
       if (intentionalClose) return;
 
       // Policy violation means the server rejected us — no point retrying.
@@ -175,4 +224,4 @@ async function connect(cfg, rawPort, args) {
   createWs();
 }
 
-module.exports = { connect };
+module.exports = { connect, openUpgrade };

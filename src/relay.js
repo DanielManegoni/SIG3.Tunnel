@@ -68,8 +68,11 @@ function splashPage() {
 `;
 }
 
-const peers = new Map(); // name → ws
-const queue = new Map(); // requestId → { res, timer, peerName }
+const MAX_UPGRADES = 256;
+
+const peers    = new Map(); // name → ws
+const queue    = new Map(); // requestId → { res, timer, peerName }
+const upgrades = new Map(); // upgradeId → { socket, peerName }
 
 function nameFromPath(path) {
   const m = (path || '').match(/^\/_bifrost\/([a-z0-9][a-z0-9-]{0,62})$/i);
@@ -79,6 +82,59 @@ function nameFromPath(path) {
 function nameFromHost(host) {
   const m = (host || '').match(/^([a-z0-9][a-z0-9-]*)\.tunnel\./i);
   return m ? m[1].toLowerCase() : null;
+}
+
+// Browser WebSocket upgrades (e.g. Blazor's /_blazor) are carried as raw bytes:
+// the relay pipes the browser socket to the client, and the client pipes it to
+// localhost. Bytes travel base64-encoded inside JSON, like HTTP bodies do.
+// No queue timeout applies: upgrades stay open for as long as the socket does.
+function tunnelUpgrade(req, socket, head) {
+  const name = nameFromHost(req.headers.host) || 'default';
+  const peer = peers.get(name);
+
+  if (!peer || peer.readyState !== WebSocket.OPEN) {
+    socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    return;
+  }
+
+  if (upgrades.size >= MAX_UPGRADES) {
+    socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    return;
+  }
+
+  const id        = randomUUID();
+  const clientIp  = req.socket.remoteAddress;
+  const forwarded = req.headers['x-forwarded-for'];
+  const headers   = {
+    ...req.headers,
+    'x-forwarded-for': forwarded ? `${forwarded}, ${clientIp}` : clientIp,
+    'x-forwarded-host': req.headers.host,
+    'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'https',
+  };
+
+  upgrades.set(id, { socket, peerName: name });
+
+  peer.send(JSON.stringify({
+    type:    'upgrade',
+    id,
+    method:  req.method,
+    url:     req.url,
+    headers,
+    head:    head.length ? head.toString('base64') : '',
+  }));
+
+  socket.on('data', chunk => {
+    if (!upgrades.has(id)) return;
+    peer.send(JSON.stringify({ type: 'up-data', id, data: chunk.toString('base64') }));
+  });
+
+  const finish = () => {
+    if (!upgrades.delete(id)) return;
+    if (peer.readyState === WebSocket.OPEN) peer.send(JSON.stringify({ type: 'up-close', id }));
+  };
+
+  socket.on('close', finish);
+  socket.on('error', () => { finish(); socket.destroy(); });
 }
 
 function serve(port, host) {
@@ -168,7 +224,7 @@ function serve(port, host) {
     if (path === '/_bifrost' || /^\/_bifrost\/[a-z0-9][a-z0-9-]{0,62}$/i.test(path)) {
       wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
     } else {
-      socket.destroy();
+      tunnelUpgrade(req, socket, head);
     }
   });
 
@@ -219,6 +275,18 @@ function serve(port, host) {
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
 
+      if (msg.type === 'up-data' || msg.type === 'up-close') {
+        const up = upgrades.get(msg.id);
+        if (!up || up.peerName !== name) return;
+        if (msg.type === 'up-close') {
+          upgrades.delete(msg.id);
+          up.socket.end();
+        } else {
+          up.socket.write(Buffer.from(msg.data, 'base64'));
+        }
+        return;
+      }
+
       const entry = queue.get(msg.id);
       if (!entry) return;
 
@@ -241,6 +309,11 @@ function serve(port, host) {
         clearTimeout(entry.timer);
         errorResponse(entry.res, 502, entry.req);
         queue.delete(id);
+      }
+      for (const [id, up] of upgrades) {
+        if (up.peerName !== name) continue;
+        upgrades.delete(id);
+        up.socket.destroy();
       }
     });
 
