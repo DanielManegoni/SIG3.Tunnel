@@ -202,3 +202,37 @@ test('HTTP: /admin serve o painel HTML no domínio raiz', async () => {
   assert.match(r.tipo, /text\/html/);
   assert.match(r.d, /SIG3\.Tunnel - pedidos/);
 });
+
+test('limite de pedidos por IP numa hora vale mesmo depois de aprovados', () => {
+  const ip = '5.5.5.5';
+  for (let i = 0; i < pedidos.MAX_CRIADOS_IP_HORA; i++) {
+    const { id } = pedidos.criar({ descricao: 'x', segredo: SEG_A, ip, agora: AGORA });
+    pedidos.aprovar(id, AGORA, 'teste');   // aprovado não conta como pendente, mas conta na hora
+  }
+  assert.equal(erro(() => pedidos.criar({ descricao: 'x', segredo: SEG_A, ip, agora: AGORA + 1000 })), 'muitos_pedidos');
+  // Uma hora depois, o IP pode pedir de novo.
+  assert.equal(erro(() => pedidos.criar({ descricao: 'x', segredo: SEG_A, ip, agora: AGORA + 61 * 60 * 1000 })), null);
+});
+
+test('recusado antigo é podado do arquivo na próxima criação', () => {
+  const velho = new Date(Date.now() - pedidos.PODA_MS - 60_000).toISOString();
+  fs.writeFileSync(path.join(tmp, 'pedidos.json'), JSON.stringify([{
+    id: 'aaaaaaaaaaaaaaaa', codigo: '11111', descricao: 'antigo', segredoHash: 'x', ip: '1',
+    criado: velho, expira: velho, status: 'recusado',
+  }]));
+
+  pedidos.criar({ descricao: 'novo', segredo: SEG_A, ip: '2' });
+
+  const ids = pedidos.listar().map(p => p.id);
+  assert.ok(!ids.includes('aaaaaaaaaaaaaaaa'), 'o recusado antigo saiu');
+});
+
+test('HTTP: login de admin é bloqueado depois de muitas senhas erradas', async () => {
+  const cab = { 'x-real-ip': '7.7.7.7', 'x-admin-senha': 'errada' };
+  for (let i = 0; i < 10; i++) {
+    assert.equal((await pedir('GET', '/api/admin/pedidos', { cabecalhos: cab })).status, 403);
+  }
+  const bloqueado = await pedir('GET', '/api/admin/pedidos', { cabecalhos: cab });
+  assert.equal(bloqueado.status, 429);
+  assert.equal(bloqueado.corpo.erro, 'muitas_tentativas');
+});

@@ -14,7 +14,9 @@ function readTokens() {
 
 function writeTokens(list) {
   ensureDir();
-  fs.writeFileSync(TOKENS_FILE, JSON.stringify(list, null, 2) + '\n', 'utf8');
+  // Só hashes, mas nada de leitura para outros usuários. mode vale só na criação; o chmod cobre o arquivo antigo.
+  fs.writeFileSync(TOKENS_FILE, JSON.stringify(list, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  try { fs.chmodSync(TOKENS_FILE, 0o600); } catch { /* Windows e sistemas sem permissão POSIX */ }
 }
 
 function hashToken(raw) {

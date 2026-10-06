@@ -42,9 +42,12 @@ function lerJson(req) {
   });
 }
 
-// O IP de origem vem do nginx (X-Real-IP, que ele mesmo define); o socket é o próprio nginx.
+// O IP de origem: o relay escuta só em 127.0.0.1, então quem conecta é o nginx. O X-Real-IP só é confiado
+// quando a conexão é de loopback (o nginx o define e sobrescreve); de outra origem, vale o socket.
 function ipDe(req) {
-  return req.headers['x-real-ip'] || req.socket.remoteAddress || 'desconhecido';
+  const origem = req.socket.remoteAddress || 'desconhecido';
+  const local = origem === '127.0.0.1' || origem === '::1' || origem === '::ffff:127.0.0.1';
+  return (local && req.headers['x-real-ip']) || origem;
 }
 
 function adminOk(req) {
@@ -53,6 +56,38 @@ function adminOk(req) {
   const a = Buffer.from(senha);
   const b = Buffer.from(String(req.headers['x-admin-senha'] || ''));
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Tentativas de senha de admin por IP: 10 erros em 15 min bloqueiam o IP por 15 min. Acerto zera a conta.
+const FALHAS_MAX    = 10;
+const JANELA_MS     = 15 * 60 * 1000;
+const falhasAdmin   = new Map(); // ip -> { falhas, inicio, bloqueadoAte }
+
+function adminBloqueado(ip, agora = Date.now()) {
+  const f = falhasAdmin.get(ip);
+  return !!f && f.bloqueadoAte > agora;
+}
+
+function registrarFalhaAdmin(ip, agora = Date.now()) {
+  const f = falhasAdmin.get(ip);
+  if (!f || agora - f.inicio > JANELA_MS) {
+    falhasAdmin.set(ip, { falhas: 1, inicio: agora, bloqueadoAte: 0 });
+    return;
+  }
+  f.falhas += 1;
+  if (f.falhas >= FALHAS_MAX) f.bloqueadoAte = agora + JANELA_MS;
+}
+
+// Só o acerto zera: quem erra de propósito não ganha tentativas novas.
+function admin(req) {
+  const ip = ipDe(req);
+  if (adminBloqueado(ip)) return 'bloqueado';
+  if (!adminOk(req)) {
+    registrarFalhaAdmin(ip);
+    return 'negado';
+  }
+  falhasAdmin.delete(ip);
+  return 'ok';
 }
 
 const STATUS_DE_ERRO = {
@@ -85,7 +120,9 @@ async function tratarApi(req, res) {
     }
 
     if (p.startsWith('/api/admin/')) {
-      if (!adminOk(req)) return enviar(res, 403, { erro: 'admin_negado' });
+      const estado = admin(req);
+      if (estado === 'bloqueado') return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas senhas erradas. Espere 15 minutos.' });
+      if (estado !== 'ok') return enviar(res, 403, { erro: 'admin_negado' });
       if (req.method === 'GET' && p === '/api/admin/pedidos') return enviar(res, 200, pedidos.listar());
       m = p.match(/^\/api\/admin\/pedidos\/([0-9a-f]{16})\/(aprovar|recusar)$/);
       if (req.method === 'POST' && m) {

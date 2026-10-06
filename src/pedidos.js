@@ -9,9 +9,13 @@ const crypto = require('crypto');
 const { PEDIDOS_FILE, ensureDir } = require('./paths');
 const tokens = require('./tokens');
 
-const MAX_PENDENTES_POR_IP = 5;
+const MAX_PENDENTES_POR_IP  = 5;
 const MAX_PENDENTES         = 200;
+const MAX_CRIADOS_IP_HORA   = 10;   // pedidos criados por um IP numa hora (qualquer status)
+const MAX_CRIADOS_HORA      = 100;  // pedidos criados por todos numa hora
 const VALIDADE_MS           = 24 * 60 * 60 * 1000; // pedido pendente expira em 24 h
+const PODA_MS               = 7 * 24 * 60 * 60 * 1000; // recusado/expirado some do arquivo após 7 dias
+const UMA_HORA_MS           = 60 * 60 * 1000;
 const TENTATIVAS_CODIGO     = 50;
 
 // Código ocupado = pedido vivo (pendente/aprovado) ou já entregue. Recusado ou expirado libera o código.
@@ -59,12 +63,21 @@ function criar({ descricao, segredo, ip, agora = Date.now(), autoAprovar = false
 
   if (typeof segredo !== 'string' || segredo.length < 32) throw new ErroPedido('segredo_invalido', 'Segredo do pedido ausente ou curto demais.');
 
-  const lista = lerPedidos().map(p => atual(p, agora));
+  // Poda: recusado/expirado antigo some do arquivo (o código dele já estava livre).
+  const lista = lerPedidos()
+    .map(p => atual(p, agora))
+    .filter(p => !(['recusado', 'expirado'].includes(p.status) && agora - Date.parse(p.criado) > PODA_MS));
 
   const pendentes = lista.filter(p => p.status === 'pendente');
   if (pendentes.length >= MAX_PENDENTES) throw new ErroPedido('fila_cheia', 'Há pedidos demais na fila. Tente mais tarde.');
   if (pendentes.filter(p => p.ip === ip).length >= MAX_PENDENTES_POR_IP)
     throw new ErroPedido('muitos_pedidos', 'Você já tem pedidos em aberto. Espere a resposta antes de pedir outro.');
+
+  // Limite por hora, contando todos os status: quem aprova rápido não escapa do limite.
+  const umaHora = lista.filter(p => agora - Date.parse(p.criado) < UMA_HORA_MS);
+  if (umaHora.length >= MAX_CRIADOS_HORA) throw new ErroPedido('fila_cheia', 'Muitos pedidos nesta hora. Tente mais tarde.');
+  if (umaHora.filter(p => p.ip === ip).length >= MAX_CRIADOS_IP_HORA)
+    throw new ErroPedido('muitos_pedidos', 'Muitos pedidos deste computador nesta hora. Tente mais tarde.');
 
   const usados = new Set(lista.filter(p => OCUPA.has(p.status)).map(p => p.codigo));
 
@@ -118,10 +131,22 @@ function entregar(id, segredo, agora = Date.now()) {
   if (p.status === 'expirado') return { status: 'expirado' };
   if (p.status === 'entregue') throw new ErroPedido('ja_entregue', 'O token deste pedido já foi entregue.');
 
-  const emitido = tokens.issue(p.codigo);
+  // Marca como entregue ANTES de emitir: uma queda no meio não gera dois tokens para o mesmo pedido.
+  // Se o token nem chegou a ser gravado, o pedido volta a aprovado e o próximo GET tenta de novo.
   lista[i].status = 'entregue';
-  lista[i].tokenId = emitido.id;
   lista[i].entregue = new Date(agora).toISOString();
+  gravarPedidos(lista);
+
+  let emitido;
+  try {
+    emitido = tokens.issue(p.codigo);
+  } catch (e) {
+    lista[i].status = 'aprovado';
+    delete lista[i].entregue;
+    gravarPedidos(lista);
+    throw e;
+  }
+  lista[i].tokenId = emitido.id;
   gravarPedidos(lista);
   return { status: 'aprovado', token: emitido.raw, nome: p.codigo };
 }
@@ -135,4 +160,4 @@ function listar(agora = Date.now()) {
   });
 }
 
-module.exports = { criar, aprovar, recusar, entregar, listar, ErroPedido, MAX_PENDENTES_POR_IP, VALIDADE_MS };
+module.exports = { criar, aprovar, recusar, entregar, listar, ErroPedido, MAX_PENDENTES_POR_IP, MAX_CRIADOS_IP_HORA, VALIDADE_MS, PODA_MS };
