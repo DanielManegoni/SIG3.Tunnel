@@ -22,7 +22,7 @@ function hashToken(raw) {
 }
 
 function issue(scope) {
-  const raw  = 'bf_' + crypto.randomBytes(24).toString('hex');
+  const raw  = 'sig3_' + crypto.randomBytes(24).toString('hex');
   const hash = hashToken(raw);
   const id   = crypto.randomBytes(4).toString('hex');
 

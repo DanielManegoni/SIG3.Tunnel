@@ -22,23 +22,23 @@ test('readConfig returns empty object when file absent', () => {
 });
 
 test('writeConfig + readConfig round-trip', () => {
-  writeConfig({ endpoint: 'wss://example.com', token: 'bf_abc' });
+  writeConfig({ endpoint: 'wss://example.com', token: 'sig3_abc' });
   const cfg = readConfig();
   assert.equal(cfg.endpoint, 'wss://example.com');
-  assert.equal(cfg.token, 'bf_abc');
+  assert.equal(cfg.token, 'sig3_abc');
 });
 
 test('writeConfig creates config directory if missing', () => {
   fs.rmSync(tmp, { recursive: true, force: true });
-  writeConfig({ endpoint: 'wss://x.com', token: 'bf_y' });
+  writeConfig({ endpoint: 'wss://x.com', token: 'sig3_y' });
   assert.ok(fs.existsSync(path.join(tmp, 'config.json')));
 });
 
 test('requireConfig returns config when endpoint and token present', () => {
-  writeConfig({ endpoint: 'wss://example.com', token: 'bf_abc' });
+  writeConfig({ endpoint: 'wss://example.com', token: 'sig3_abc' });
   const cfg = requireConfig();
   assert.equal(cfg.endpoint, 'wss://example.com');
-  assert.equal(cfg.token, 'bf_abc');
+  assert.equal(cfg.token, 'sig3_abc');
 });
 
 test('requireConfig exits 1 when config missing', async () => {

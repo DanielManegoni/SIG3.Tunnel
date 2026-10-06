@@ -39,10 +39,10 @@ sig3tunnel token issue --global
 #
 #   id:     a1b2c3d4
 #   scope:  global
-#   token:  bf_...
+#   token:  sig3_...
 #
 #   → run on your machine:
-#   sig3tunnel use <endpoint> bf_...
+#   sig3tunnel use <endpoint> sig3_...
 
 # Start the relay
 sig3tunnel serve --port 9001 --host 127.0.0.1 --daemon
@@ -51,7 +51,7 @@ sig3tunnel serve --port 9001 --host 127.0.0.1 --daemon
 **On your machine:**
 
 ```bash
-sig3tunnel use wss://tunnel.example.com bf_...
+sig3tunnel use wss://tunnel.example.com sig3_...
 sig3tunnel connect 3000
 ```
 

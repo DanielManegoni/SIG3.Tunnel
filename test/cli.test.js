@@ -107,7 +107,7 @@ test('token issue --scope creates token and prints id + raw', async () => {
   assert.equal(code, 0);
   assert.ok(stdout.includes('id:'));
   assert.ok(stdout.includes('token:'));
-  assert.ok(stdout.match(/bf_[0-9a-f]+/));
+  assert.ok(stdout.match(/sig3_[0-9a-f]+/));
 });
 
 test('token issue --global creates global token', async () => {
@@ -146,12 +146,12 @@ test('token revoke unknown id exits 1', async () => {
 test('use saves endpoint and token to config', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-use-'));
   try {
-    const { code, stdout } = await run(['use', 'wss://example.com', 'bf_mytoken'], { SIG3TUNNEL_CONFIG_DIR: dir });
+    const { code, stdout } = await run(['use', 'wss://example.com', 'sig3_mytoken'], { SIG3TUNNEL_CONFIG_DIR: dir });
     assert.equal(code, 0);
     assert.ok(stdout.includes('saved'));
     const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
     assert.equal(cfg.endpoint, 'wss://example.com');
-    assert.equal(cfg.token, 'bf_mytoken');
+    assert.equal(cfg.token, 'sig3_mytoken');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
