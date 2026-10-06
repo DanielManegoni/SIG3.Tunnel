@@ -33,10 +33,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/DanielManegoni/Sig3.Tunnel"
+    "url": "https://github.com/DanielManegoni/SIG3.Tunnel"
   },
-  "homepage": "https://github.com/DanielManegoni/Sig3.Tunnel#readme",
+  "homepage": "https://github.com/DanielManegoni/SIG3.Tunnel#readme",
   "bugs": {
-    "url": "https://github.com/DanielManegoni/Sig3.Tunnel/issues"
+    "url": "https://github.com/DanielManegoni/SIG3.Tunnel/issues"
   }
 }

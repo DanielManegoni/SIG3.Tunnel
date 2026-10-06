@@ -62,7 +62,7 @@ function splashPage() {
   <h1>sig3tunnel</h1>
   <p class="meta">relay running &middot; v${VERSION}</p>
   <p class="ping"><a href="/_sig3/ping" style="color:inherit;text-decoration:none;">/_sig3/ping</a></p>
-  <footer>Sig3.Tunnel</footer>
+  <footer>SIG3.Tunnel</footer>
 </body>
 </html>
 `;

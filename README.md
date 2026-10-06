@@ -141,7 +141,7 @@ server {
 ```ini
 # /etc/systemd/system/sig3tunnel.service
 [Unit]
-Description=Sig3.Tunnel Relay
+Description=SIG3.Tunnel Relay
 After=network.target
 
 [Service]

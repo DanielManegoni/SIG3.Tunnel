@@ -219,9 +219,9 @@ test('relay adds X-Forwarded headers for reverse proxy compat (Next.js hydration
       path: '/test-page',
       headers: { host: 'myapp.tunnel.example.com' },
     });
-    // Sig3.Tunnel should preserve the original host in x-forwarded-host
+    // SIG3.Tunnel should preserve the original host in x-forwarded-host
     assert.equal(receivedHeaders['x-forwarded-host'], 'myapp.tunnel.example.com');
-    // Sig3.Tunnel should set x-forwarded-proto (defaults to https for security)
+    // SIG3.Tunnel should set x-forwarded-proto (defaults to https for security)
     assert.equal(receivedHeaders['x-forwarded-proto'], 'https');
     // Client will later change Host to localhost:PORT, but these headers persist
     // so Next.js can determine the real origin without code changes
