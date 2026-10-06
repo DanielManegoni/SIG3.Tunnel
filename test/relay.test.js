@@ -93,7 +93,7 @@ test('GET / on root domain with no default tunnel returns splash page', async ()
 test('relay rejects connection with invalid token', async () => {
   await new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/_sig3`, {
-      headers: { authorization: 'Bearer bf_invalid' },
+      headers: { authorization: 'Bearer sig3_invalid' },
     });
     ws.once('close', (code) => {
       assert.equal(code, 1008);

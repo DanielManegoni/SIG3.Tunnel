@@ -17,10 +17,10 @@ beforeEach(() => {
   try { fs.unlinkSync(path.join(tmp, 'tokens.json')); } catch { /* ok */ }
 });
 
-test('issue returns id, raw token with bf_ prefix, and scope', () => {
+test('issue returns id, raw token with sig3_ prefix, and scope', () => {
   const r = tokens.issue('preview');
   assert.ok(r.id);
-  assert.ok(r.raw.startsWith('bf_'));
+  assert.ok(r.raw.startsWith('sig3_'));
   assert.equal(r.scope, 'preview');
 });
 
@@ -30,7 +30,7 @@ test('issue stores hash not raw value', () => {
   const entry = list.find(t => t.id === r.id);
   assert.ok(entry, 'entry not found in file');
   assert.equal(entry.hash.length, 64);       // SHA-256 hex
-  assert.ok(!entry.hash.startsWith('bf_'));  // hash, not raw
+  assert.ok(!entry.hash.startsWith('sig3_'));  // hash, not raw
   assert.ok(!('raw' in entry));
 });
 
@@ -54,7 +54,7 @@ test('validate accepts correct token and scope', () => {
 
 test('validate rejects wrong raw value', () => {
   tokens.issue('myapp');
-  assert.equal(tokens.validate('bf_notvalid', 'myapp'), null);
+  assert.equal(tokens.validate('sig3_notvalid', 'myapp'), null);
 });
 
 test('validate rejects scope mismatch', () => {
