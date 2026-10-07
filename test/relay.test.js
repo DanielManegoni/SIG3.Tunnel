@@ -187,6 +187,29 @@ test('scoped token connects to matching path', async () => {
   }
 });
 
+test('one-level host tunel-<name>.<domain> routes to the tunnel; the root and other names do not', async () => {
+  const ws = await openTunnel('/_sig3/preview', scopedToken.raw, () => ({
+    status: 200,
+    headers: { 'content-type': 'text/plain' },
+    body: Buffer.from('um nivel').toString('base64'),
+  }));
+
+  try {
+    const r = await httpGet(relayPort, { path: '/test', headers: { host: 'tunel-preview.example.com' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.body, 'um nivel');
+
+    const raiz = await httpGet(relayPort, { path: '/', headers: { host: 'tunel.example.com' } });
+    assert.ok(raiz.body.includes('relay running'));
+
+    const outro = await httpGet(relayPort, { path: '/test', headers: { host: 'agrovett.example.com' } });
+    assert.equal(outro.status, 503);
+  } finally {
+    ws.close();
+    await new Promise(r => ws.once('close', r));
+  }
+});
+
 test('relay rejects duplicate tunnel name', async () => {
   const ws1 = await openTunnel('/_sig3', globalToken.raw, () => ({ status: 200, headers: {}, body: '' }));
 

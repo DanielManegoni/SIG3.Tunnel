@@ -85,8 +85,12 @@ function nameFromPath(path) {
   return m ? m[1].toLowerCase() : 'default';
 }
 
+// Endereço do túnel: tunel-<nome>.<dominio> (um nível só, coberto pelo certificado gratuito da
+// Cloudflare e escondido atrás da nuvem laranja). O formato antigo <nome>.tunel.<dominio> segue
+// aceito enquanto houver SIG3 instalado que ainda monta o endereço assim.
 function nameFromHost(host) {
-  const m = (host || '').match(/^([a-z0-9][a-z0-9-]*)\.tunel\./i);
+  const h = host || '';
+  const m = h.match(/^tunel-([a-z0-9][a-z0-9-]*)\./i) || h.match(/^([a-z0-9][a-z0-9-]*)\.tunel\./i);
   return m ? m[1].toLowerCase() : null;
 }
 

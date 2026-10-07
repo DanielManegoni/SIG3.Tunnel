@@ -1,7 +1,7 @@
 'use strict';
 
 // Pedidos de túnel. Quem pede NÃO escolhe o nome: o servidor sorteia um código de 5 dígitos, que vira
-// o prefixo do endereço (<codigo>.tunel.<dominio>). Só depois da aprovação de um administrador o
+// o prefixo do endereço (tunel-<codigo>.<dominio>). Só depois da aprovação de um administrador o
 // token é emitido, e só é entregue a quem tem o segredo do pedido.
 
 const fs     = require('fs');
