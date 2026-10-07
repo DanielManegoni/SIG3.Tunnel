@@ -59,10 +59,11 @@ function openPeer(relayTok) {
   });
 }
 
-// Browser side: connects to the public host, the way Chrome would through the tunnel.
-function openBrowser(host, p = '/_blazor?id=abc') {
+// Browser side: connects through the tunnel, carrying the cookie that the entry link set
+// (no subdomain, no wildcard cert needed - see src/relay.js's selecionarTunelPorLink).
+function openBrowser(codigo, p = '/_blazor?id=abc') {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}${p}`, { headers: { host } });
+    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}${p}`, { headers: { cookie: `sig3tunel=${codigo}` } });
     ws.once('open', () => resolve(ws));
     ws.once('error', reject);
     ws.once('unexpected-response', (req, res) => {
@@ -101,7 +102,7 @@ after(() => {
 });
 
 test('WebSocket upgrade on a tunnel host reaches the local app and echoes both ways', async () => {
-  const browser = await openBrowser('echo.tunel.test');
+  const browser = await openBrowser('echo');
 
   const reply = nextMessage(browser);
   browser.send('hello from browser');
@@ -116,17 +117,17 @@ test('WebSocket upgrade on a tunnel host reaches the local app and echoes both w
 });
 
 test('upgrade to a tunnel with no connected peer is refused with 503', async () => {
-  await assert.rejects(openBrowser('nobody.tunel.test'), /status 503/);
+  await assert.rejects(openBrowser('nobody'), /status 503/);
 });
 
 test('closing the browser socket closes the local socket too', async () => {
-  const browser = await openBrowser('echo.tunel.test');
+  const browser = await openBrowser('echo');
   const closed = new Promise(resolve => browser.once('close', resolve));
   browser.close();
   await closed;
 
   // The tunnel still works for the next browser after the previous one left.
-  const again = await openBrowser('echo.tunel.test');
+  const again = await openBrowser('echo');
   const reply = nextMessage(again);
   again.send('still alive');
   assert.equal((await reply).data, 'still alive');

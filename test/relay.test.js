@@ -174,10 +174,10 @@ test('scoped token connects to matching path', async () => {
   }));
 
   try {
-    // Route to "preview" tunnel via subdomain-style host header
+    // Route to "preview" tunnel via the cookie (no subdomain, no wildcard cert needed)
     const r = await httpGet(relayPort, {
       path: '/test',
-      headers: { host: 'preview.tunel.example.com' },
+      headers: { cookie: 'sig3tunel=preview' },
     });
     assert.equal(r.status, 200);
     assert.equal(r.body, 'scoped');
@@ -207,6 +207,42 @@ test('relay rejects duplicate tunnel name', async () => {
   }
 });
 
+test('entry link by path (/<codigo>) sets the cookie and redirects to /', async () => {
+  const r = await httpGet(relayPort, { path: '/83920' });
+  assert.equal(r.status, 302);
+  assert.equal(r.headers.location, '/');
+  assert.match(r.headers['set-cookie'][0], /^sig3tunel=83920; Path=\/; HttpOnly; SameSite=Lax/);
+});
+
+test('entry link by query (/?conexao=<codigo>) also sets the cookie', async () => {
+  const r = await httpGet(relayPort, { path: '/?conexao=71244' });
+  assert.equal(r.status, 302);
+  assert.match(r.headers['set-cookie'][0], /^sig3tunel=71244;/);
+});
+
+test('entry link sets Secure on the cookie when the request came in over https (via X-Forwarded-Proto)', async () => {
+  const r = await httpGet(relayPort, { path: '/55501', headers: { 'x-forwarded-proto': 'https' } });
+  assert.match(r.headers['set-cookie'][0], /; Secure$/);
+});
+
+test('a code that is not exactly 5 digits is not treated as an entry link', async () => {
+  const semCodigo = await httpGet(relayPort, { path: '/123456' });
+  assert.equal(semCodigo.headers['set-cookie'], undefined);
+  const outro = await httpGet(relayPort, { path: '/?conexao=12a45' });
+  assert.equal(outro.headers['set-cookie'], undefined);
+});
+
+test('entry link is blocked after 10 attempts from the same IP in the window', async () => {
+  const cab = { 'x-real-ip': '9.1.2.3' };
+  for (let i = 0; i < 10; i++) {
+    const r = await httpGet(relayPort, { path: `/1000${i}`, headers: cab });
+    assert.equal(r.status, 302);
+  }
+  const r = await httpGet(relayPort, { path: '/10010', headers: cab });
+  assert.equal(r.status, 429);
+  assert.equal(JSON.parse(r.body).erro, 'muitas_tentativas');
+});
+
 test('relay adds X-Forwarded headers for reverse proxy compat (Next.js hydration)', async () => {
   let receivedHeaders;
   const ws = await openTunnel('/_sig3/myapp', globalToken.raw, req => {
@@ -217,10 +253,10 @@ test('relay adds X-Forwarded headers for reverse proxy compat (Next.js hydration
   try {
     await httpGet(relayPort, {
       path: '/test-page',
-      headers: { host: 'myapp.tunel.example.com' },
+      headers: { host: 'tunel.bossoistec.com.br', cookie: 'sig3tunel=myapp' },
     });
-    // SIG3.Tunnel should preserve the original host in x-forwarded-host
-    assert.equal(receivedHeaders['x-forwarded-host'], 'myapp.tunel.example.com');
+    // SIG3.Tunnel should preserve the original (single, constant) public host in x-forwarded-host
+    assert.equal(receivedHeaders['x-forwarded-host'], 'tunel.bossoistec.com.br');
     // SIG3.Tunnel should set x-forwarded-proto (defaults to https for security)
     assert.equal(receivedHeaders['x-forwarded-proto'], 'https');
     // Client will later change Host to localhost:PORT, but these headers persist
