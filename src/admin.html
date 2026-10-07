@@ -69,7 +69,7 @@
     async function carregar() {
       $('erro-lista').textContent = '';
       try {
-        const pedidos = await chamar('GET', '/api/admin/pedidos');
+        const pedidos = await chamar('GET', '/api-tunel/admin/pedidos');
         pedidos.sort((a, b) => (b.criado || '').localeCompare(a.criado || ''));
         $('corpo').innerHTML = pedidos.map(p => `
           <tr>
@@ -95,7 +95,7 @@
       $('erro-login').textContent = '';
       senha = $('senha').value;
       try {
-        await chamar('GET', '/api/admin/pedidos');   // confere a senha antes de mostrar a lista
+        await chamar('GET', '/api-tunel/admin/pedidos');   // confere a senha antes de mostrar a lista
         $('login').hidden = true;
         $('lista').hidden = false;
         $('senha').value = '';
@@ -111,7 +111,7 @@
       if (!botao) return;
       botao.disabled = true;
       try {
-        await chamar('POST', `/api/admin/pedidos/${botao.dataset.id}/${botao.dataset.acao}`,
+        await chamar('POST', `/api-tunel/admin/pedidos/${botao.dataset.id}/${botao.dataset.acao}`,
           botao.dataset.acao === 'aprovar' ? { liberadoPor: 'Admin (painel)' } : undefined);
         await carregar();
       } catch (e) {

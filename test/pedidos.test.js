@@ -148,25 +148,25 @@ after(() => {
 });
 
 test('HTTP: pedir, consultar, aprovar pelo admin e pegar o token', async () => {
-  const novo = await pedir('POST', '/api/pedidos', { corpo: { descricao: 'Bossois Tec', segredo: SEG_A } });
+  const novo = await pedir('POST', '/api-tunel/pedidos', { corpo: { descricao: 'Bossois Tec', segredo: SEG_A } });
   assert.equal(novo.status, 201);
   assert.match(novo.corpo.codigo, /^[1-9][0-9]{4}$/);
   assert.equal(novo.corpo.status, 'pendente');
   const { id, codigo } = novo.corpo;
 
-  const antes = await pedir('GET', `/api/pedidos/${id}`, { cabecalhos: { 'x-pedido-segredo': SEG_A } });
+  const antes = await pedir('GET', `/api-tunel/pedidos/${id}`, { cabecalhos: { 'x-pedido-segredo': SEG_A } });
   assert.equal(antes.corpo.status, 'pendente');
 
-  const sem = await pedir('POST', `/api/admin/pedidos/${id}/aprovar`);
+  const sem = await pedir('POST', `/api-tunel/admin/pedidos/${id}/aprovar`);
   assert.equal(sem.status, 403, 'aprovar sem senha de admin é negado');
 
-  const ok = await pedir('POST', `/api/admin/pedidos/${id}/aprovar`, {
+  const ok = await pedir('POST', `/api-tunel/admin/pedidos/${id}/aprovar`, {
     corpo: { liberadoPor: 'Daniel' },
     cabecalhos: { 'x-admin-senha': 'senha-de-teste-123' },
   });
   assert.equal(ok.status, 200);
 
-  const entregue = await pedir('GET', `/api/pedidos/${id}`, { cabecalhos: { 'x-pedido-segredo': SEG_A } });
+  const entregue = await pedir('GET', `/api-tunel/pedidos/${id}`, { cabecalhos: { 'x-pedido-segredo': SEG_A } });
   assert.equal(entregue.status, 200);
   assert.equal(entregue.corpo.status, 'aprovado');
   assert.equal(entregue.corpo.nome, codigo);
@@ -175,20 +175,20 @@ test('HTTP: pedir, consultar, aprovar pelo admin e pegar o token', async () => {
 });
 
 test('HTTP: lista de admin sem senha é negada e a senha errada também', async () => {
-  assert.equal((await pedir('GET', '/api/admin/pedidos')).status, 403);
-  assert.equal((await pedir('GET', '/api/admin/pedidos', { cabecalhos: { 'x-admin-senha': 'errada' } })).status, 403);
+  assert.equal((await pedir('GET', '/api-tunel/admin/pedidos')).status, 403);
+  assert.equal((await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: { 'x-admin-senha': 'errada' } })).status, 403);
 });
 
 test('HTTP: JSON inválido e rota desconhecida', async () => {
   const r = await new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port: porta, method: 'POST', path: '/api/pedidos',
+    const req = http.request({ host: '127.0.0.1', port: porta, method: 'POST', path: '/api-tunel/pedidos',
       headers: { 'content-type': 'application/json' } }, res => {
       let d = ''; res.on('data', c => { d += c; }); res.on('end', () => resolve({ status: res.statusCode, d }));
     });
     req.on('error', reject); req.end('{nao-e-json');
   });
   assert.equal(r.status, 400);
-  assert.equal((await pedir('GET', '/api/nada-aqui')).status, 404);
+  assert.equal((await pedir('GET', '/api-tunel/nada-aqui')).status, 404);
 });
 
 test('HTTP: /admin serve o painel HTML no domínio raiz', async () => {
@@ -230,9 +230,9 @@ test('recusado antigo é podado do arquivo na próxima criação', () => {
 test('HTTP: login de admin é bloqueado depois de muitas senhas erradas', async () => {
   const cab = { 'x-real-ip': '7.7.7.7', 'x-admin-senha': 'errada' };
   for (let i = 0; i < 10; i++) {
-    assert.equal((await pedir('GET', '/api/admin/pedidos', { cabecalhos: cab })).status, 403);
+    assert.equal((await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: cab })).status, 403);
   }
-  const bloqueado = await pedir('GET', '/api/admin/pedidos', { cabecalhos: cab });
+  const bloqueado = await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: cab });
   assert.equal(bloqueado.status, 429);
   assert.equal(bloqueado.corpo.erro, 'muitas_tentativas');
 });

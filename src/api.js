@@ -1,12 +1,12 @@
 'use strict';
 
-// API de pedidos de nome (ver src/pedidos.js). Rotas em /api/.
+// API de pedidos de nome (ver src/pedidos.js). Rotas em /api-tunel/.
 //
-//   POST /api/pedidos                       { descricao, segredo }        -> 201 { id, codigo, status }
-//   GET  /api/pedidos/<id>                  cabecalho X-Pedido-Segredo    -> { status, token? }
-//   GET  /api/admin/pedidos                 cabecalho X-Admin-Senha       -> lista
-//   POST /api/admin/pedidos/<id>/aprovar    cabecalho X-Admin-Senha
-//   POST /api/admin/pedidos/<id>/recusar    cabecalho X-Admin-Senha
+//   POST /api-tunel/pedidos                       { descricao, segredo }        -> 201 { id, codigo, status }
+//   GET  /api-tunel/pedidos/<id>                  cabecalho X-Pedido-Segredo    -> { status, token? }
+//   GET  /api-tunel/admin/pedidos                 cabecalho X-Admin-Senha       -> lista
+//   POST /api-tunel/admin/pedidos/<id>/aprovar    cabecalho X-Admin-Senha
+//   POST /api-tunel/admin/pedidos/<id>/recusar    cabecalho X-Admin-Senha
 //
 // Admin desligado se SIG3TUNNEL_ADMIN_SENHA estiver vazia.
 // SIG3TUNNEL_AUTO_APROVAR=1 aprova sem humano: SO PARA TESTE. Com ele ligado, qualquer um recebe token.
@@ -103,7 +103,7 @@ const STATUS_DE_ERRO = {
 async function tratarApi(req, res) {
   const p = new URL(req.url, 'http://relay').pathname;
   try {
-    if (req.method === 'POST' && p === '/api/pedidos') {
+    if (req.method === 'POST' && p === '/api-tunel/pedidos') {
       const corpo = await lerJson(req);
       const r = pedidos.criar({
         descricao: corpo.descricao,
@@ -114,17 +114,17 @@ async function tratarApi(req, res) {
       return enviar(res, 201, r);
     }
 
-    let m = p.match(/^\/api\/pedidos\/([0-9a-f]{16})$/);
+    let m = p.match(/^\/api-tunel\/pedidos\/([0-9a-f]{16})$/);
     if (req.method === 'GET' && m) {
       return enviar(res, 200, pedidos.entregar(m[1], req.headers['x-pedido-segredo']));
     }
 
-    if (p.startsWith('/api/admin/')) {
+    if (p.startsWith('/api-tunel/admin/')) {
       const estado = admin(req);
       if (estado === 'bloqueado') return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas senhas erradas. Espere 15 minutos.' });
       if (estado !== 'ok') return enviar(res, 403, { erro: 'admin_negado' });
-      if (req.method === 'GET' && p === '/api/admin/pedidos') return enviar(res, 200, pedidos.listar());
-      m = p.match(/^\/api\/admin\/pedidos\/([0-9a-f]{16})\/(aprovar|recusar)$/);
+      if (req.method === 'GET' && p === '/api-tunel/admin/pedidos') return enviar(res, 200, pedidos.listar());
+      m = p.match(/^\/api-tunel\/admin\/pedidos\/([0-9a-f]{16})\/(aprovar|recusar)$/);
       if (req.method === 'POST' && m) {
         const r = m[2] === 'aprovar'
           ? pedidos.aprovar(m[1], Date.now(), (await lerJson(req).catch(() => ({}))).liberadoPor)

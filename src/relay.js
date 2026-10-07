@@ -146,7 +146,7 @@ function tunnelUpgrade(req, socket, head) {
 
 function serve(port, host) {
   const server = http.createServer((req, res) => {
-    if ((req.url || '').startsWith('/api/')) {
+    if ((req.url || '').startsWith('/api-tunel/')) {
       tratarApi(req, res);
       return;
     }
