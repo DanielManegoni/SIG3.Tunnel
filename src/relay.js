@@ -85,76 +85,9 @@ function nameFromPath(path) {
   return m ? m[1].toLowerCase() : 'default';
 }
 
-const COOKIE_TUNEL = 'sig3tunel';
-
-// IP de origem: o relay escuta só em 127.0.0.1 (quem conecta é o nginx). X-Real-IP só é confiado
-// vindo do loopback (mesma regra do api.js); de outra origem, vale o socket.
-function ipConfiavel(req) {
-  const origem = req.socket.remoteAddress || 'desconhecido';
-  const local = origem === '127.0.0.1' || origem === '::1' || origem === '::ffff:127.0.0.1';
-  return (local && req.headers['x-real-ip']) || origem;
-}
-
-// Tentativas de código no link de entrada: 10 em 15 min bloqueiam o IP por 15 min. Não impede
-// acesso (o código nunca foi segredo de acesso, só diz "qual computador") - freia quem fica
-// sondando `/00000` a `/99999` pra descobrir quais túneis estão vivos agora.
-const TENTATIVAS_LINK_MAX = 10;
-const JANELA_LINK_MS      = 15 * 60 * 1000;
-const tentativasLink      = new Map(); // ip -> { tentativas, inicio, bloqueadoAte }
-
-function linkBloqueado(ip, agora = Date.now()) {
-  const f = tentativasLink.get(ip);
-  return !!f && f.bloqueadoAte > agora;
-}
-
-function registrarTentativaLink(ip, agora = Date.now()) {
-  const f = tentativasLink.get(ip);
-  if (!f || agora - f.inicio > JANELA_LINK_MS) {
-    tentativasLink.set(ip, { tentativas: 1, inicio: agora, bloqueadoAte: 0 });
-    return;
-  }
-  f.tentativas += 1;
-  if (f.tentativas >= TENTATIVAS_LINK_MAX) f.bloqueadoAte = agora + JANELA_LINK_MS;
-}
-
-// Sem subdomínio (e sem certificado wildcard): qual peer atende cada pedido vem de um cookie,
-// gravado uma vez quando o navegador entra pelo link com o código (ver selecionarTunelPorLink).
-function nomeDoCookie(req) {
-  const cru = req.headers.cookie || '';
-  for (const parte of cru.split(';')) {
-    const i = parte.indexOf('=');
-    if (i === -1) continue;
-    if (parte.slice(0, i).trim() === COOKIE_TUNEL) return (parte.slice(i + 1).trim().toLowerCase() || null);
-  }
-  return null;
-}
-
-// Link de entrada: /<codigo> ou /?conexao=<codigo>, sempre os 5 dígitos que pedidos.js sorteia.
-// Grava o cookie e redireciona para "/" limpo - dali em diante é o cookie, não o host, que decide
-// o peer. Assim o relay inteiro roda num host só (tunel.<dominio>), sem exigir wildcard.
-function selecionarTunelPorLink(req, res) {
-  const url = new URL(req.url, 'http://relay');
-  const porPath = url.pathname.match(/^\/([0-9]{5})\/?$/);
-  const porQuery = url.searchParams.get('conexao');
-  const codigo = porPath ? porPath[1] : (porQuery && /^[0-9]{5}$/.test(porQuery) ? porQuery : null);
-  if (!codigo) return false;
-
-  const ip = ipConfiavel(req);
-  if (linkBloqueado(ip)) {
-    res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ erro: 'muitas_tentativas', mensagem: 'Muitos códigos tentados. Espere 15 minutos.' }));
-    return true;
-  }
-  registrarTentativaLink(ip);
-
-  const https = (req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https';
-  res.writeHead(302, {
-    'Set-Cookie': `${COOKIE_TUNEL}=${codigo}; Path=/; HttpOnly; SameSite=Lax${https ? '; Secure' : ''}`,
-    'Cache-Control': 'no-store',
-    Location: '/',
-  });
-  res.end();
-  return true;
+function nameFromHost(host) {
+  const m = (host || '').match(/^([a-z0-9][a-z0-9-]*)\.tunel\./i);
+  return m ? m[1].toLowerCase() : null;
 }
 
 // Browser WebSocket upgrades (e.g. Blazor's /_blazor) are carried as raw bytes:
@@ -162,7 +95,7 @@ function selecionarTunelPorLink(req, res) {
 // localhost. Bytes travel base64-encoded inside JSON, like HTTP bodies do.
 // No queue timeout applies: upgrades stay open for as long as the socket does.
 function tunnelUpgrade(req, socket, head) {
-  const name = nomeDoCookie(req) || 'default';
+  const name = nameFromHost(req.headers.host) || 'default';
   const peer = peers.get(name);
 
   if (!peer || peer.readyState !== WebSocket.OPEN) {
@@ -218,7 +151,7 @@ function serve(port, host) {
       return;
     }
 
-    if (req.method === 'GET' && (req.url === '/admin' || req.url === '/admin/')) {
+    if (req.method === 'GET' && (req.url === '/admin' || req.url === '/admin/') && nameFromHost(req.headers.host) === null) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(ADMIN_HTML);
       return;
@@ -230,16 +163,14 @@ function serve(port, host) {
       return;
     }
 
-    if (req.method === 'GET' && selecionarTunelPorLink(req, res)) return;
-
-    // Sem túnel escolhido (sem cookie) e sem túnel padrão conectado → splash page.
-    if (req.url === '/' && !nomeDoCookie(req) && !peers.has('default')) {
+    // Root domain with no subdomain and no default tunnel → splash page.
+    if (req.url === '/' && nameFromHost(req.headers.host) === null && !peers.has('default')) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(splashPage());
       return;
     }
 
-    const name = nomeDoCookie(req) || 'default';
+    const name = nameFromHost(req.headers.host) || 'default';
     const peer = peers.get(name);
 
     if (!peer || peer.readyState !== WebSocket.OPEN) {
