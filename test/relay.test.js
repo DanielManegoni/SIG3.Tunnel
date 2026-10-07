@@ -83,7 +83,7 @@ test('request to unconnected tunnel returns 503', async () => {
 });
 
 test('GET / on root domain with no default tunnel returns splash page', async () => {
-  const r = await httpGet(relayPort, { path: '/', headers: { host: 'tunnel.example.com' } });
+  const r = await httpGet(relayPort, { path: '/', headers: { host: 'tunel.example.com' } });
   assert.equal(r.status, 200);
   assert.ok(r.headers['content-type'].includes('text/html'));
   assert.ok(r.body.includes('sig3tunnel'));
@@ -177,7 +177,7 @@ test('scoped token connects to matching path', async () => {
     // Route to "preview" tunnel via subdomain-style host header
     const r = await httpGet(relayPort, {
       path: '/test',
-      headers: { host: 'preview.tunnel.example.com' },
+      headers: { host: 'preview.tunel.example.com' },
     });
     assert.equal(r.status, 200);
     assert.equal(r.body, 'scoped');
@@ -217,10 +217,10 @@ test('relay adds X-Forwarded headers for reverse proxy compat (Next.js hydration
   try {
     await httpGet(relayPort, {
       path: '/test-page',
-      headers: { host: 'myapp.tunnel.example.com' },
+      headers: { host: 'myapp.tunel.example.com' },
     });
     // SIG3.Tunnel should preserve the original host in x-forwarded-host
-    assert.equal(receivedHeaders['x-forwarded-host'], 'myapp.tunnel.example.com');
+    assert.equal(receivedHeaders['x-forwarded-host'], 'myapp.tunel.example.com');
     // SIG3.Tunnel should set x-forwarded-proto (defaults to https for security)
     assert.equal(receivedHeaders['x-forwarded-proto'], 'https');
     // Client will later change Host to localhost:PORT, but these headers persist

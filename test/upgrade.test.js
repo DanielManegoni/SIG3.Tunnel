@@ -101,7 +101,7 @@ after(() => {
 });
 
 test('WebSocket upgrade on a tunnel host reaches the local app and echoes both ways', async () => {
-  const browser = await openBrowser('echo.tunnel.test');
+  const browser = await openBrowser('echo.tunel.test');
 
   const reply = nextMessage(browser);
   browser.send('hello from browser');
@@ -116,17 +116,17 @@ test('WebSocket upgrade on a tunnel host reaches the local app and echoes both w
 });
 
 test('upgrade to a tunnel with no connected peer is refused with 503', async () => {
-  await assert.rejects(openBrowser('nobody.tunnel.test'), /status 503/);
+  await assert.rejects(openBrowser('nobody.tunel.test'), /status 503/);
 });
 
 test('closing the browser socket closes the local socket too', async () => {
-  const browser = await openBrowser('echo.tunnel.test');
+  const browser = await openBrowser('echo.tunel.test');
   const closed = new Promise(resolve => browser.once('close', resolve));
   browser.close();
   await closed;
 
   // The tunnel still works for the next browser after the previous one left.
-  const again = await openBrowser('echo.tunnel.test');
+  const again = await openBrowser('echo.tunel.test');
   const reply = nextMessage(again);
   again.send('still alive');
   assert.equal((await reply).data, 'still alive');

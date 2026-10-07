@@ -86,7 +86,7 @@ function nameFromPath(path) {
 }
 
 function nameFromHost(host) {
-  const m = (host || '').match(/^([a-z0-9][a-z0-9-]*)\.tunnel\./i);
+  const m = (host || '').match(/^([a-z0-9][a-z0-9-]*)\.tunel\./i);
   return m ? m[1].toLowerCase() : null;
 }
 
