@@ -55,6 +55,32 @@ function openTunnel(path, raw, handler) {
   });
 }
 
+// SIG3 que fala o protocolo 2: requisição e resposta em quadro binário (docs/protocolo.md).
+function quadro(id, cabecalho, corpo) {
+  const json = Buffer.from(JSON.stringify(cabecalho));
+  const tam = Buffer.alloc(4);
+  tam.writeUInt32BE(json.length);
+  return Buffer.concat([Buffer.from(id, 'ascii'), tam, json, corpo]);
+}
+
+function openTunnelV2(path, raw, handler) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}${path}`, {
+      headers: { authorization: `Bearer ${raw}`, 'x-sig3-protocolo': '2' },
+    });
+    ws.once('open', () => resolve(ws));
+    ws.once('error', reject);
+    ws.on('message', async (msg, isBinary) => {
+      assert.ok(isBinary, 'protocolo 2 recebe a requisição em binário');
+      const id = msg.subarray(0, 36).toString('ascii');
+      const tam = msg.readUInt32BE(36);
+      const req = JSON.parse(msg.subarray(40, 40 + tam).toString());
+      const reply = await handler({ ...req, corpo: msg.subarray(40 + tam) });
+      ws.send(quadro(id, { status: reply.status, headers: reply.headers }, reply.corpo), { binary: true });
+    });
+  });
+}
+
 before(async () => {
   relayPort   = await freePort();
   relayServer = serve(relayPort, '127.0.0.1');
@@ -209,6 +235,57 @@ test('one-level host tunel-<name>.<domain> routes to the tunnel; the root and ot
   } finally {
     ws.close();
     await new Promise(r => ws.once('close', r));
+  }
+});
+
+test('protocol 2: request and response bodies travel as raw bytes, untouched', async () => {
+  const bytes = Buffer.from([0, 255, 1, 254, 10, 13, 0x80]);
+  let recebido;
+  const ws = await openTunnelV2('/_sig3/binario', globalToken.raw, req => {
+    recebido = req;
+    return { status: 201, headers: { 'content-type': 'application/octet-stream' }, corpo: Buffer.concat([req.corpo, bytes]) };
+  });
+
+  try {
+    const r = await new Promise((resolve, reject) => {
+      const req = http.request({ hostname: '127.0.0.1', port: relayPort, method: 'POST', path: '/eco?x=1',
+        headers: { host: 'tunel-binario.example.com' } }, res => {
+        const partes = [];
+        res.on('data', c => partes.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, corpo: Buffer.concat(partes) }));
+      });
+      req.on('error', reject);
+      req.end(bytes);
+    });
+    assert.equal(recebido.method, 'POST');
+    assert.equal(recebido.url, '/eco?x=1');
+    assert.deepEqual(recebido.corpo, bytes);
+    assert.equal(r.status, 201);
+    assert.deepEqual(r.corpo, Buffer.concat([bytes, bytes]));
+  } finally {
+    ws.close();
+    await new Promise(r => ws.once('close', r));
+  }
+});
+
+test('one tunnel cannot use up the queue slots of the others', async () => {
+  const travado = await openTunnel('/_sig3/lotado', globalToken.raw, () => new Promise(() => {}));
+  const livre = await openTunnel('/_sig3/livre', globalToken.raw, () => ({ status: 200, headers: {}, body: '' }));
+
+  const pendentes = [];
+  try {
+    for (let i = 0; i < 64; i++) pendentes.push(httpGet(relayPort, { path: `/p${i}`, headers: { host: 'tunel-lotado.example.com' } }));
+    await new Promise(r => setTimeout(r, 100));
+
+    const excedente = await httpGet(relayPort, { path: '/mais', headers: { host: 'tunel-lotado.example.com' } });
+    assert.equal(excedente.status, 429);
+    const outro = await httpGet(relayPort, { path: '/', headers: { host: 'tunel-livre.example.com' } });
+    assert.equal(outro.status, 200);
+  } finally {
+    travado.terminate();
+    await Promise.all(pendentes);
+    livre.close();
+    await new Promise(r => livre.once('close', r));
   }
 });
 

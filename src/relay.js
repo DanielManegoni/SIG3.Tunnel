@@ -76,6 +76,14 @@ function splashPage() {
 
 const MAX_UPGRADES = 256;
 
+// Por túnel, abaixo do teto geral: o visitante de um cliente não esgota a vaga dos outros.
+const MAX_QUEUE_POR_TUNEL    = 64;
+const MAX_UPGRADES_POR_TUNEL = 64;
+
+// A Cloudflare corta a resposta em 100 s (erro 524). O SIG3 desiste em 90 s (TunelSig3Tunnel) e
+// responde 502; o relay espera um pouco mais, para a resposta do SIG3 chegar antes do 504 daqui.
+const TEMPO_RESPOSTA_MS = 95_000;
+
 const peers    = new Map(); // name → ws
 const queue    = new Map(); // requestId → { res, timer, peerName }
 const upgrades = new Map(); // upgradeId → { socket, peerName }
@@ -123,10 +131,41 @@ function cookiesSemDominio(headers) {
   return headers;
 }
 
-// Browser WebSocket upgrades (e.g. Blazor's /_blazor) are carried as raw bytes:
-// the relay pipes the browser socket to the client, and the client pipes it to
-// localhost. Bytes travel base64-encoded inside JSON, like HTTP bodies do.
-// No queue timeout applies: upgrades stay open for as long as the socket does.
+function contarDoTunel(mapa, nome) {
+  let n = 0;
+  for (const v of mapa.values()) if (v.peerName === nome) n++;
+  return n;
+}
+
+// Protocolo: docs/protocolo.md. Quadro binário de HTTP (versão 2):
+//   36 bytes do id (UUID ASCII) | 4 bytes, tamanho do JSON (big-endian) | JSON | corpo cru
+function montarQuadro(id, cabecalho, corpo) {
+  const json = Buffer.from(JSON.stringify(cabecalho), 'utf8');
+  const tam  = Buffer.alloc(4);
+  tam.writeUInt32BE(json.length);
+  return Buffer.concat([Buffer.from(id, 'ascii'), tam, json, corpo]);
+}
+
+function lerQuadro(raw) {
+  if (raw.length < 40) return null;
+  const tam = raw.readUInt32BE(36);
+  if (40 + tam > raw.length) return null;
+  try {
+    return { cabecalho: JSON.parse(raw.subarray(40, 40 + tam).toString('utf8')), corpo: raw.subarray(40 + tam) };
+  } catch {
+    return null;
+  }
+}
+
+function responder(entry, status, headersBrutos, corpo) {
+  const headers = cookiesSemDominio({ ...(headersBrutos || {}) });
+  delete headers['transfer-encoding'];
+  entry.res.writeHead(status || 200, headers);
+  entry.res.end(corpo && corpo.length ? corpo : undefined);
+}
+
+// Upgrades de WebSocket do navegador (o /_blazor) viajam como bytes crus: o relay liga o socket do
+// navegador ao túnel, e o SIG3 o liga ao localhost. Sem timeout: dura enquanto o socket durar.
 function tunnelUpgrade(req, socket, head) {
   if (!caminhoLocal(req.url)) {
     socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
@@ -140,7 +179,7 @@ function tunnelUpgrade(req, socket, head) {
     return;
   }
 
-  if (upgrades.size >= MAX_UPGRADES) {
+  if (upgrades.size >= MAX_UPGRADES || contarDoTunel(upgrades, name) >= MAX_UPGRADES_POR_TUNEL) {
     socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     return;
   }
@@ -213,7 +252,7 @@ function serve(port, host) {
       return;
     }
 
-    if (queue.size >= MAX_QUEUE) {
+    if (queue.size >= MAX_QUEUE || contarDoTunel(queue, name) >= MAX_QUEUE_POR_TUNEL) {
       errorResponse(res, 429);
       return;
     }
@@ -237,24 +276,19 @@ function serve(port, host) {
     req.on('end', () => {
       if (bodyTooBig) return;
 
-      const headers = cabecalhosRepasse(req);
-
-      const msg = {
-        id,
-        method:  req.method,
-        url:     req.url,
-        headers,
-        body:    Buffer.concat(chunks).toString('base64'),
-      };
+      const cabecalho = { method: req.method, url: req.url, headers: cabecalhosRepasse(req) };
+      const corpo     = Buffer.concat(chunks);
 
       const timer = setTimeout(() => {
         if (!queue.has(id)) return;
         queue.delete(id);
         errorResponse(res, 504);
-      }, 30_000);
+      }, TEMPO_RESPOSTA_MS);
 
       queue.set(id, { res, timer, peerName: name });
-      peer.send(JSON.stringify(msg));
+      // SIG3 que avisou a versão 2 recebe o corpo cru; o anterior, em base64 dentro do JSON.
+      if (peer._protocolo >= 2) peer.send(montarQuadro(id, cabecalho, corpo), { binary: true });
+      else peer.send(JSON.stringify({ id, ...cabecalho, body: corpo.toString('base64') }));
     });
 
     req.on('error', () => errorResponse(res, 400));
@@ -309,17 +343,29 @@ function serve(port, host) {
     }
 
     ws._pingPending = false;
+    ws._protocolo   = parseInt(req.headers['x-sig3-protocolo'] || '1', 10) || 1;
     ws.on('pong', () => { ws._pingPending = false; });
 
     peers.set(name, ws);
     console.log(`[sig3tunnel] "${name}" connected from ${req.socket.remoteAddress}`);
 
     ws.on('message', (raw, isBinary) => {
-      // Frame binário do cliente: 36 bytes de id + dados do upgrade.
+      // Frame binário: 36 bytes de id + dados de um upgrade, ou o quadro de uma resposta HTTP.
       if (isBinary) {
         if (raw.length < 36) return;
-        const up = upgrades.get(raw.subarray(0, 36).toString('ascii'));
-        if (up && up.peerName === name) up.socket.write(raw.subarray(36));
+        const id = raw.subarray(0, 36).toString('ascii');
+        const up = upgrades.get(id);
+        if (up) {
+          if (up.peerName === name) up.socket.write(raw.subarray(36));
+          return;
+        }
+        const entry = queue.get(id);
+        if (!entry || entry.peerName !== name) return;
+        const quadro = lerQuadro(raw);
+        if (!quadro) return;
+        queue.delete(id);
+        clearTimeout(entry.timer);
+        responder(entry, quadro.cabecalho.status, quadro.cabecalho.headers, quadro.corpo);
         return;
       }
 
@@ -342,15 +388,9 @@ function serve(port, host) {
       const entry = queue.get(msg.id);
       if (!entry || entry.peerName !== name) return;
 
-      const { res, timer } = entry;
       queue.delete(msg.id);
-      clearTimeout(timer);
-
-      const headers = cookiesSemDominio({ ...(msg.headers || {}) });
-      delete headers['transfer-encoding'];
-
-      res.writeHead(msg.status || 200, headers);
-      res.end(msg.body ? Buffer.from(msg.body, 'base64') : undefined);
+      clearTimeout(entry.timer);
+      responder(entry, msg.status, msg.headers, msg.body ? Buffer.from(msg.body, 'base64') : null);
     });
 
     ws.on('close', () => {
