@@ -80,6 +80,8 @@ test('/_sig3/ping returns ok', async () => {
 test('request to unconnected tunnel returns 503', async () => {
   const r = await httpGet(relayPort, { path: '/anything', headers: { host: '127.0.0.1' } });
   assert.equal(r.status, 503);
+  assert.ok(r.headers['content-type'].includes('text/html'));
+  assert.ok(!/avelor/i.test(r.body));
 });
 
 test('GET / on root domain with no default tunnel returns splash page', async () => {

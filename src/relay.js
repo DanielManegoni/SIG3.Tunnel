@@ -177,7 +177,7 @@ function tunnelUpgrade(req, socket, head) {
 function serve(port, host) {
   const server = http.createServer((req, res) => {
     if (!caminhoLocal(req.url)) {
-      errorResponse(res, 400, req);
+      errorResponse(res, 400);
       return;
     }
 
@@ -209,12 +209,12 @@ function serve(port, host) {
     const peer = peers.get(name);
 
     if (!peer || peer.readyState !== WebSocket.OPEN) {
-      errorResponse(res, 503, req);
+      errorResponse(res, 503);
       return;
     }
 
     if (queue.size >= MAX_QUEUE) {
-      errorResponse(res, 429, req);
+      errorResponse(res, 429);
       return;
     }
 
@@ -228,7 +228,7 @@ function serve(port, host) {
       if (bodySize > MAX_BODY) {
         bodyTooBig = true;
         req.destroy();
-        errorResponse(res, 413, req);
+        errorResponse(res, 413);
         return;
       }
       chunks.push(chunk);
@@ -250,14 +250,14 @@ function serve(port, host) {
       const timer = setTimeout(() => {
         if (!queue.has(id)) return;
         queue.delete(id);
-        errorResponse(res, 504, req);
+        errorResponse(res, 504);
       }, 30_000);
 
-      queue.set(id, { res, req, timer, peerName: name });
+      queue.set(id, { res, timer, peerName: name });
       peer.send(JSON.stringify(msg));
     });
 
-    req.on('error', () => errorResponse(res, 400, req));
+    req.on('error', () => errorResponse(res, 400));
   });
 
   const wss = new WebSocketServer({ noServer: true });
@@ -359,7 +359,7 @@ function serve(port, host) {
       for (const [id, entry] of queue) {
         if (entry.peerName !== name) continue;
         clearTimeout(entry.timer);
-        errorResponse(entry.res, 502, entry.req);
+        errorResponse(entry.res, 502);
         queue.delete(id);
       }
       for (const [id, up] of upgrades) {

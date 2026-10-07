@@ -34,7 +34,6 @@ test('help prints usage and exits 0', async () => {
   const { code, stdout } = await run(['help']);
   assert.equal(code, 0);
   assert.ok(stdout.includes('serve'));
-  assert.ok(stdout.includes('connect'));
   assert.ok(stdout.includes('token'));
 });
 
@@ -83,23 +82,6 @@ test('token unknown subcommand exits 1', async () => {
   assert.ok(stderr.includes('unknown subcommand'));
 });
 
-test('use without args exits 1', async () => {
-  const { code, stderr } = await run(['use']);
-  assert.equal(code, 1);
-  assert.ok(stderr.includes('usage'));
-});
-
-test('connect without saved config exits 1', async () => {
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-nocfg-'));
-  try {
-    const { code, stderr } = await run(['connect', '3000'], { SIG3TUNNEL_CONFIG_DIR: empty });
-    assert.equal(code, 1);
-    assert.ok(stderr.includes('sig3tunnel use'));
-  } finally {
-    fs.rmSync(empty, { recursive: true, force: true });
-  }
-});
-
 // ── token commands ────────────────────────────────────────────────────────────
 
 test('token issue --scope creates token and prints id + raw', async () => {
@@ -141,18 +123,12 @@ test('token revoke unknown id exits 1', async () => {
   assert.ok(stderr.includes('not found'));
 });
 
-// ── use ───────────────────────────────────────────────────────────────────────
+// ── comandos do projeto de origem que saíram ─────────────────────────────────
 
-test('use saves endpoint and token to config', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-use-'));
-  try {
-    const { code, stdout } = await run(['use', 'wss://example.com', 'sig3_mytoken'], { SIG3TUNNEL_CONFIG_DIR: dir });
-    assert.equal(code, 0);
-    assert.ok(stdout.includes('saved'));
-    const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
-    assert.equal(cfg.endpoint, 'wss://example.com');
-    assert.equal(cfg.token, 'sig3_mytoken');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+test('client-side commands are gone (the tunnel client is the SIG3 itself)', async () => {
+  for (const cmd of ['use', 'connect', 'stop', 'status']) {
+    const { code, stderr } = await run([cmd]);
+    assert.equal(code, 1, cmd);
+    assert.ok(stderr.includes('unknown command'), cmd);
   }
 });

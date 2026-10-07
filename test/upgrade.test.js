@@ -11,8 +11,8 @@ const WebSocket = require('ws');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-upgrade-'));
 process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
 
+const net              = require('node:net');
 const { serve }        = require('../src/relay');
-const { openUpgrade }  = require('../src/client');
 const tokens           = require('../src/tokens');
 
 let relayServer;
@@ -38,20 +38,32 @@ function startEcho() {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-// Tunnel client (what `sig3tunnel connect` runs), pointed at the echo server.
+// Abre o socket local de um upgrade e repete o handshake, como o TunelSig3Tunnel do VSig.Web:
+// os bytes de volta vão em frame binário (36 bytes de id + dados).
+function openUpgrade(port, msg, ws, sockets) {
+  const headers = { ...msg.headers, host: `localhost:${port}` };
+  const sock = net.connect(port, '127.0.0.1');
+  sockets.set(msg.id, sock);
+  const lines = Object.entries(headers).map(([k, v]) => `${k}: ${v}`);
+  sock.write(`${msg.method} ${msg.url} HTTP/1.1\r\n${lines.join('\r\n')}\r\n\r\n`);
+  if (msg.head) sock.write(Buffer.from(msg.head, 'base64'));
+  sock.on('data', chunk => ws.send(Buffer.concat([Buffer.from(msg.id, 'ascii'), chunk]), { binary: true }));
+  sock.on('close', () => { if (sockets.delete(msg.id)) ws.send(JSON.stringify({ type: 'up-close', id: msg.id })); });
+  sock.on('error', () => sock.destroy());
+}
+
+// Lado do SIG3 no túnel, apontado para o servidor de eco.
 function openPeer(relayTok) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/_sig3/echo`, {
       headers: { authorization: `Bearer ${relayTok}` },
     });
     const sockets = new Map();
-    const send = obj => ws.send(JSON.stringify(obj));
     ws.on('message', (raw, isBinary) => {
       // Bytes do navegador chegam como frame binário: 36 bytes de id + dados.
       if (isBinary) return sockets.get(raw.subarray(0, 36).toString('ascii'))?.write(raw.subarray(36));
       const msg = JSON.parse(raw);
-      if (msg.type === 'upgrade') return openUpgrade(echoPort, msg, send, sockets);
-      if (msg.type === 'up-data') return sockets.get(msg.id)?.write(Buffer.from(msg.data, 'base64'));
+      if (msg.type === 'upgrade') return openUpgrade(echoPort, msg, ws, sockets);
       if (msg.type === 'up-close') { sockets.get(msg.id)?.end(); sockets.delete(msg.id); }
     });
     ws.once('open', () => resolve(ws));
