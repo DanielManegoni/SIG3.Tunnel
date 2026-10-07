@@ -230,3 +230,76 @@ test('relay adds X-Forwarded headers for reverse proxy compat (Next.js hydration
     await new Promise(r => ws.once('close', r));
   }
 });
+
+test('x-forwarded-for carries only the visitor IP (from nginx X-Real-IP), never what the visitor sent', async () => {
+  let receivedHeaders;
+  const ws = await openTunnel('/_sig3/ipreal', globalToken.raw, req => {
+    receivedHeaders = req.headers;
+    return { status: 200, headers: {}, body: '' };
+  });
+
+  try {
+    await httpGet(relayPort, {
+      path: '/',
+      headers: { host: 'ipreal.tunel.example.com', 'x-forwarded-for': '6.6.6.6', 'x-real-ip': '8.8.4.4' },
+    });
+    assert.equal(receivedHeaders['x-forwarded-for'], '8.8.4.4');
+  } finally {
+    ws.close();
+    await new Promise(r => ws.once('close', r));
+  }
+});
+
+test('Set-Cookie from a tunnel loses its Domain attribute (one tunnel cannot set cookies on the others)', async () => {
+  const ws = await openTunnel('/_sig3/biscoito', globalToken.raw, () => ({
+    status: 200,
+    headers: { 'set-cookie': ['a=1; Domain=tunel.example.com; Path=/', 'b=2; Path=/; HttpOnly'] },
+    body: '',
+  }));
+
+  try {
+    const r = await httpGet(relayPort, { path: '/', headers: { host: 'biscoito.tunel.example.com' } });
+    assert.deepEqual(r.headers['set-cookie'], ['a=1; Path=/', 'b=2; Path=/; HttpOnly']);
+  } finally {
+    ws.close();
+    await new Promise(r => ws.once('close', r));
+  }
+});
+
+test('a request target that is not an origin path ("//host", absolute URL) is refused before reaching any tunnel', async () => {
+  let chamado = false;
+  const ws = await openTunnel('/_sig3/rede', globalToken.raw, () => { chamado = true; return { status: 200, headers: {}, body: '' }; });
+
+  try {
+    for (const alvo of ['//192.168.0.1/', 'http://192.168.0.1/', '/\\192.168.0.1/']) {
+      const r = await httpGet(relayPort, { path: alvo, headers: { host: 'rede.tunel.example.com' } });
+      assert.equal(r.status, 400, alvo);
+    }
+    assert.equal(chamado, false);
+  } finally {
+    ws.close();
+    await new Promise(r => ws.once('close', r));
+  }
+});
+
+test('a tunnel cannot answer a request that was sent to another tunnel', async () => {
+  let idDoAlfa;
+  const chegou = new Promise(resolve => {
+    openTunnel('/_sig3/alfa', globalToken.raw, req => { idDoAlfa = req.id; resolve(); return new Promise(() => {}); })
+      .then(ws => { alfa = ws; });
+  });
+  let alfa;
+  const beta = await openTunnel('/_sig3/beta', globalToken.raw, () => ({ status: 200, headers: {}, body: '' }));
+  await new Promise(r => setTimeout(r, 30));
+
+  try {
+    const pendente = httpGet(relayPort, { path: '/', headers: { host: 'alfa.tunel.example.com' } });
+    await chegou;
+    beta.send(JSON.stringify({ id: idDoAlfa, status: 200, headers: {}, body: Buffer.from('intruso').toString('base64') }));
+    await new Promise(r => setTimeout(r, 50));
+    alfa.send(JSON.stringify({ id: idDoAlfa, status: 200, headers: {}, body: Buffer.from('legitimo').toString('base64') }));
+    assert.equal((await pendente).body, 'legitimo');
+  } finally {
+    for (const ws of [alfa, beta]) { ws.close(); await new Promise(r => ws.once('close', r)); }
+  }
+});

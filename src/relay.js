@@ -5,7 +5,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const { randomUUID }                 = require('crypto');
 const { validate }                   = require('./tokens');
 const { errorResponse }              = require('./errors');
-const { tratarApi }                  = require('./api');
+const { tratarApi, ipDe }            = require('./api');
 const fs                             = require('fs');
 const path                           = require('path');
 
@@ -90,11 +90,44 @@ function nameFromHost(host) {
   return m ? m[1].toLowerCase() : null;
 }
 
+// Só caminho de origem ("/x"). "//host/x" e "http://host/x" chegam como req.url e, resolvidos do
+// outro lado contra a base local, trocariam o destino: o túnel viraria passagem para a rede do cliente.
+function caminhoLocal(url) {
+  return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//') && !url.startsWith('/\\');
+}
+
+// X-Forwarded-For SUBSTITUI o que veio, não acrescenta: o app do outro lado lê só o último IP da
+// lista, e acrescentando o último era sempre o nginx (127.0.0.1) - todo visitante aparecia igual.
+// O que o visitante manda nesse cabeçalho é forjável e não vai adiante.
+function cabecalhosRepasse(req) {
+  return {
+    ...req.headers,
+    'x-forwarded-for': ipDe(req),
+    'x-forwarded-host': req.headers.host,
+    'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'https',
+  };
+}
+
+// Um túnel não planta cookie nos outros: tira o Domain= de todo Set-Cookie, que vira só do host
+// daquele túnel (com Domain=tunel.<dominio> ele valeria em todos os <codigo>.tunel.<dominio>).
+function cookiesSemDominio(headers) {
+  for (const nome of Object.keys(headers)) {
+    if (nome.toLowerCase() !== 'set-cookie') continue;
+    const lista = Array.isArray(headers[nome]) ? headers[nome] : [headers[nome]];
+    headers[nome] = lista.map(c => String(c).split(';').filter(p => !/^\s*domain\s*=/i.test(p)).join(';'));
+  }
+  return headers;
+}
+
 // Browser WebSocket upgrades (e.g. Blazor's /_blazor) are carried as raw bytes:
 // the relay pipes the browser socket to the client, and the client pipes it to
 // localhost. Bytes travel base64-encoded inside JSON, like HTTP bodies do.
 // No queue timeout applies: upgrades stay open for as long as the socket does.
 function tunnelUpgrade(req, socket, head) {
+  if (!caminhoLocal(req.url)) {
+    socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    return;
+  }
   const name = nameFromHost(req.headers.host) || 'default';
   const peer = peers.get(name);
 
@@ -108,15 +141,8 @@ function tunnelUpgrade(req, socket, head) {
     return;
   }
 
-  const id        = randomUUID();
-  const clientIp  = req.socket.remoteAddress;
-  const forwarded = req.headers['x-forwarded-for'];
-  const headers   = {
-    ...req.headers,
-    'x-forwarded-for': forwarded ? `${forwarded}, ${clientIp}` : clientIp,
-    'x-forwarded-host': req.headers.host,
-    'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'https',
-  };
+  const id      = randomUUID();
+  const headers = cabecalhosRepasse(req);
 
   upgrades.set(id, { socket, peerName: name });
 
@@ -146,6 +172,11 @@ function tunnelUpgrade(req, socket, head) {
 
 function serve(port, host) {
   const server = http.createServer((req, res) => {
+    if (!caminhoLocal(req.url)) {
+      errorResponse(res, 400, req);
+      return;
+    }
+
     if ((req.url || '').startsWith('/api-tunel/')) {
       tratarApi(req, res);
       return;
@@ -202,17 +233,7 @@ function serve(port, host) {
     req.on('end', () => {
       if (bodyTooBig) return;
 
-      const clientIp  = req.socket.remoteAddress;
-      const forwarded = req.headers['x-forwarded-for'];
-      const originalHost = req.headers.host;
-      const originalProto = req.headers['x-forwarded-proto'] || 'https';
-
-      const headers   = {
-        ...req.headers,
-        'x-forwarded-for': forwarded ? `${forwarded}, ${clientIp}` : clientIp,
-        'x-forwarded-host': originalHost,
-        'x-forwarded-proto': originalProto,
-      };
+      const headers = cabecalhosRepasse(req);
 
       const msg = {
         id,
@@ -313,14 +334,15 @@ function serve(port, host) {
         return;
       }
 
+      // Só o túnel que recebeu a requisição pode respondê-la.
       const entry = queue.get(msg.id);
-      if (!entry) return;
+      if (!entry || entry.peerName !== name) return;
 
       const { res, timer } = entry;
       queue.delete(msg.id);
       clearTimeout(timer);
 
-      const headers = { ...(msg.headers || {}) };
+      const headers = cookiesSemDominio({ ...(msg.headers || {}) });
       delete headers['transfer-encoding'];
 
       res.writeHead(msg.status || 200, headers);

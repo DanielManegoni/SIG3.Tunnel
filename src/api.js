@@ -145,4 +145,4 @@ async function tratarApi(req, res) {
   }
 }
 
-module.exports = { tratarApi };
+module.exports = { tratarApi, ipDe };
