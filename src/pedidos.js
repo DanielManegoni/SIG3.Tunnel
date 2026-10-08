@@ -4,9 +4,9 @@
 // o prefixo do endereço (tunel-<codigo>.<dominio>). Só depois da aprovação de um administrador o
 // token é emitido, e só é entregue a quem tem o segredo do pedido.
 
-const fs     = require('fs');
 const crypto = require('crypto');
-const { PEDIDOS_FILE, ensureDir } = require('./paths');
+const { PEDIDOS_FILE } = require('./paths');
+const { lerJson, gravarJson } = require('./arquivo');
 const tokens = require('./tokens');
 
 const MAX_PENDENTES_POR_IP  = 5;
@@ -25,18 +25,9 @@ class ErroPedido extends Error {
   constructor(codigo, mensagem) { super(mensagem); this.codigo = codigo; }
 }
 
-function lerPedidos() {
-  try {
-    return JSON.parse(fs.readFileSync(PEDIDOS_FILE, 'utf8'));
-  } catch {
-    return [];
-  }
-}
-
-function gravarPedidos(lista) {
-  ensureDir();
-  fs.writeFileSync(PEDIDOS_FILE, JSON.stringify(lista, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-}
+// Sem cache: quem lê altera a lista e grava de volta, então cada leitura precisa de uma cópia própria.
+const lerPedidos    = () => lerJson(PEDIDOS_FILE);
+const gravarPedidos = lista => gravarJson(PEDIDOS_FILE, lista);
 
 function hashSegredo(segredo) {
   return crypto.createHash('sha256').update(segredo).digest('hex');

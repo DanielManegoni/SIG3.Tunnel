@@ -7,24 +7,18 @@
 const fs     = require('fs');
 const path   = require('path');
 const crypto = require('crypto');
-const { CONFIG_DIR, ensureDir } = require('./paths');
+const { CONFIG_DIR, TECNICOS_FILE, ensureDir } = require('./paths');
+const { lerJsonCache, gravarJson } = require('./arquivo');
 
-const ARQUIVO        = path.join(CONFIG_DIR, 'tecnicos.json');
+const ARQUIVO         = TECNICOS_FILE;
 const ARQUIVO_SEGREDO = path.join(CONFIG_DIR, 'segredo-cookie');
 
 const CABECALHO = 'x-sig3-chave';
 const COOKIE    = 'sig3tec';
 const VALIDADE_COOKIE_MS = 4 * 60 * 60 * 1000;   // o teto da sessão de suporte no SIG3
 
-function ler() {
-  try { return JSON.parse(fs.readFileSync(ARQUIVO, 'utf8')); } catch { return []; }
-}
-
-function gravar(lista) {
-  ensureDir();
-  fs.writeFileSync(ARQUIVO, JSON.stringify(lista, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-  try { fs.chmodSync(ARQUIVO, 0o600); } catch { /* Windows */ }
-}
+const ler    = () => lerJsonCache(ARQUIVO);
+const gravar = lista => gravarJson(ARQUIVO, lista);
 
 const hash = raw => crypto.createHash('sha256').update(raw).digest('hex');
 
@@ -33,7 +27,7 @@ function emitir(nome) {
   if (!n) throw new Error('nome do técnico vazio');
   const raw = 'sig3t_' + crypto.randomBytes(24).toString('hex');
   const id  = crypto.randomBytes(4).toString('hex');
-  const lista = ler();
+  const lista = [...ler()];
   lista.push({ id, nome: n, hash: hash(raw), criado: new Date().toISOString() });
   gravar(lista);
   return { id, nome: n, raw };
@@ -106,6 +100,16 @@ function porCookie(valor, tunel, agora = Date.now()) {
 // Quem está chegando a este túnel: { tecnico, novoCookie } ou null. A chave no cabeçalho vale mais
 // que o cookie e devolve um cookie novo para a janela usar dali em diante.
 function autorizar(req, tunel) {
+  try {
+    return autorizarSemTratar(req, tunel);
+  } catch (e) {
+    // Arquivo ilegível recusa a entrada e avisa; nunca vira "nenhum técnico" em silêncio.
+    console.error(`[sig3tunnel] ${e.message}`);
+    return null;
+  }
+}
+
+function autorizarSemTratar(req, tunel) {
   const chave = req.headers[CABECALHO];
   if (chave) {
     const tecnico = porChave(Array.isArray(chave) ? chave[0] : chave);

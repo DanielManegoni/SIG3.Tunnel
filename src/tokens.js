@@ -1,23 +1,11 @@
 'use strict';
 
-const fs                       = require('fs');
 const crypto                   = require('crypto');
-const { TOKENS_FILE, ensureDir } = require('./paths');
+const { TOKENS_FILE } = require('./paths');
+const { lerJsonCache, gravarJson } = require('./arquivo');
 
-function readTokens() {
-  try {
-    return JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf8'));
-  } catch {
-    return [];
-  }
-}
-
-function writeTokens(list) {
-  ensureDir();
-  // Só hashes, mas nada de leitura para outros usuários. mode vale só na criação; o chmod cobre o arquivo antigo.
-  fs.writeFileSync(TOKENS_FILE, JSON.stringify(list, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-  try { fs.chmodSync(TOKENS_FILE, 0o600); } catch { /* Windows e sistemas sem permissão POSIX */ }
-}
+const readTokens  = () => lerJsonCache(TOKENS_FILE);
+const writeTokens = list => gravarJson(TOKENS_FILE, list);
 
 function hashToken(raw) {
   return crypto.createHash('sha256').update(raw).digest('hex');
@@ -28,7 +16,7 @@ function issue(scope) {
   const hash = hashToken(raw);
   const id   = crypto.randomBytes(4).toString('hex');
 
-  const list = readTokens();
+  const list = [...readTokens()];
   list.push({ id, hash, scope, created: new Date().toISOString() });
   writeTokens(list);
 
@@ -50,9 +38,16 @@ function revoke(id) {
 // Returns the matching token entry (without hash) or null.
 // name is the tunnel name being requested (e.g. "preview"), or null for the default.
 function validate(raw, name) {
-  const hash   = hashToken(raw);
-  const tokens = readTokens();
-  const entry  = tokens.find(t => t.hash === hash);
+  const hash = hashToken(raw);
+  let tokens;
+  try {
+    tokens = readTokens();
+  } catch (e) {
+    // Arquivo ilegível recusa a conexão e avisa; nunca vira "nenhum token" em silêncio.
+    console.error(`[sig3tunnel] ${e.message}`);
+    return null;
+  }
+  const entry = tokens.find(t => t.hash === hash);
   if (!entry) return null;
 
   if (entry.scope === '*') return entry;

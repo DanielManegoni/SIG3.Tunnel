@@ -7,6 +7,8 @@ const { validate }                   = require('./tokens');
 const { errorResponse }              = require('./errors');
 const { tratarApi, ipDe }            = require('./api');
 const tecnicos                       = require('./tecnicos');
+const { lerJson }                    = require('./arquivo');
+const { TOKENS_FILE, PEDIDOS_FILE, TECNICOS_FILE } = require('./paths');
 const fs                             = require('fs');
 const path                           = require('path');
 
@@ -231,7 +233,14 @@ function tunnelUpgrade(req, socket, head) {
   socket.on('error', () => { finish(); socket.destroy(); });
 }
 
+// Arquivo de dados ilegível impede o relay de subir: rodar sem ele seria recusar todo cliente e todo
+// técnico sem dizer por quê. Arquivo que ainda não existe é normal (instalação nova).
+function verificarArquivos() {
+  for (const f of [TOKENS_FILE, PEDIDOS_FILE, TECNICOS_FILE]) lerJson(f);
+}
+
 function serve(port, host) {
+  verificarArquivos();
   const server = http.createServer((req, res) => {
     if (!caminhoLocal(req.url)) {
       errorResponse(res, 400);

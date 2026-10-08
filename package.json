@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "start": "node bin/sig3tunnel.js",
-    "test": "node --test --test-force-exit test/tokens.test.js test/relay.test.js test/upgrade.test.js test/pedidos.test.js test/cli.test.js"
+    "test": "node --test --test-force-exit test/arquivo.test.js test/tokens.test.js test/relay.test.js test/upgrade.test.js test/pedidos.test.js test/cli.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
