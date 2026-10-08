@@ -18,6 +18,18 @@ O relay manda ping a cada 30 s; sem pong até o próximo, derruba a conexão.
 Pelo `Host` do visitante: `tunel-<nome>.<domínio>` (ou o formato antigo `<nome>.tunel.<domínio>`).
 O alvo da requisição precisa ser caminho de origem (`/x`); `//host/x` e URL absoluta dão 400.
 
+## Só técnico do suporte entra num túnel
+
+Toda requisição e todo upgrade para um túnel precisam de um destes, senão o relay responde 404
+(antes de saber se o túnel existe):
+
+- `X-Sig3-Chave: sig3t_...`: a chave do técnico (`sig3tunnel suporte emitir --nome <nome>`).
+  A resposta traz, além dos cookies do SIG3, `Set-Cookie: sig3tec=<id>.<expira>.<assinatura>`
+  (HttpOnly, 4 h, preso àquele túnel).
+- o cookie `sig3tec` válido para aquele túnel. Técnico revogado perde o cookie na hora.
+
+A chave e o cookie `sig3tec` nunca chegam ao SIG3 do cliente: o relay tira os dois antes de repassar.
+
 ## Requisição HTTP
 
 Cabeçalhos repassados: os do visitante, com `x-forwarded-for` = IP do visitante (substitui o que

@@ -14,6 +14,9 @@ process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
 const net              = require('node:net');
 const { serve }        = require('../src/relay');
 const tokens           = require('../src/tokens');
+const tecnicos         = require('../src/tecnicos');
+
+const chave = tecnicos.emitir('Teste').raw;
 
 let relayServer;
 let relayPort;
@@ -72,9 +75,9 @@ function openPeer(relayTok) {
 }
 
 // Browser side: connects to the public host, the way Chrome would through the tunnel.
-function openBrowser(host, p = '/_blazor?id=abc') {
+function openBrowser(host, p = '/_blazor?id=abc', comChave = true) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}${p}`, { headers: { host } });
+    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}${p}`, { headers: { host, ...(comChave ? { 'x-sig3-chave': chave } : {}) } });
     ws.once('open', () => resolve(ws));
     ws.once('error', reject);
     ws.once('unexpected-response', (req, res) => {
@@ -129,6 +132,10 @@ test('WebSocket upgrade on a tunnel host reaches the local app and echoes both w
 
 test('upgrade to a tunnel with no connected peer is refused with 503', async () => {
   await assert.rejects(openBrowser('nobody.tunel.test'), /status 503/);
+});
+
+test('upgrade without a technician key is refused with 404, even to a connected tunnel', async () => {
+  await assert.rejects(openBrowser('echo.tunel.test', '/_blazor?id=abc', false), /status 404/);
 });
 
 test('closing the browser socket closes the local socket too', async () => {

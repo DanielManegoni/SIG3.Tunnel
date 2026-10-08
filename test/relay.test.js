@@ -13,8 +13,10 @@ process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
 
 const { serve } = require('../src/relay');
 const tokens    = require('../src/tokens');
+const tecnicos  = require('../src/tecnicos');
 
 let relayServer;
+let chaveTecnico;
 let relayPort;
 let globalToken;
 let scopedToken;
@@ -27,9 +29,12 @@ function freePort() {
   });
 }
 
+// Visitante de túnel é sempre um técnico com chave; semChave: true simula quem não tem.
 function httpGet(port, opts = {}) {
+  const { semChave, ...resto } = opts;
+  const headers = { ...(semChave ? {} : { 'x-sig3-chave': chaveTecnico.raw }), ...(resto.headers || {}) };
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: '127.0.0.1', port, ...opts }, res => {
+    const req = http.request({ hostname: '127.0.0.1', port, ...resto, headers }, res => {
       const chunks = [];
       res.on('data', c => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }));
@@ -90,6 +95,7 @@ before(async () => {
   });
   globalToken = tokens.issue('*');
   scopedToken = tokens.issue('preview');
+  chaveTecnico = tecnicos.emitir('Teste');
 });
 
 after(() => {
@@ -238,6 +244,80 @@ test('one-level host tunel-<name>.<domain> routes to the tunnel; the root and ot
   }
 });
 
+// ---- chave do técnico ---------------------------------------------------------
+
+test('without a technician key a tunnel answers 404, and does not reveal whether it is connected', async () => {
+  let chamado = false;
+  const ws = await openTunnel('/_sig3/fechado', globalToken.raw, () => { chamado = true; return { status: 200, headers: {}, body: '' }; });
+  try {
+    const conectado = await httpGet(relayPort, { path: '/', headers: { host: 'tunel-fechado.example.com' }, semChave: true });
+    const inexistente = await httpGet(relayPort, { path: '/', headers: { host: 'tunel-nada.example.com' }, semChave: true });
+    const chaveFalsa = await httpGet(relayPort, { path: '/', headers: { host: 'tunel-fechado.example.com', 'x-sig3-chave': 'sig3t_' + '0'.repeat(48) }, semChave: true });
+    assert.equal(conectado.status, 404);
+    assert.equal(inexistente.status, 404);
+    assert.equal(chaveFalsa.status, 404);
+    assert.equal(chamado, false);
+  } finally {
+    ws.close();
+    await new Promise(r => ws.once('close', r));
+  }
+});
+
+test('the key opens the tunnel, returns a cookie that works on its own, and neither reaches the client SIG3', async () => {
+  const recebidos = [];
+  const ws = await openTunnel('/_sig3/chave', globalToken.raw, req => {
+    recebidos.push(req.headers);
+    return { status: 200, headers: { 'set-cookie': ['app=1; Path=/'] }, body: '' };
+  });
+  try {
+    const primeira = await httpGet(relayPort, { path: '/', headers: { host: 'tunel-chave.example.com', cookie: 'outro=x' } });
+    assert.equal(primeira.status, 200);
+    const cookies = primeira.headers['set-cookie'];
+    assert.equal(cookies[0], 'app=1; Path=/');
+    const nosso = cookies.find(c => c.startsWith('sig3tec='));
+    assert.match(nosso, /HttpOnly/);
+
+    const segunda = await httpGet(relayPort, { path: '/x', headers: { host: 'tunel-chave.example.com', cookie: nosso.split(';')[0] + '; outro=x' }, semChave: true });
+    assert.equal(segunda.status, 200);
+
+    for (const h of recebidos) {
+      assert.equal(h['x-sig3-chave'], undefined);
+      assert.ok(!String(h.cookie || '').includes('sig3tec'));
+    }
+    assert.equal(recebidos[1].cookie, 'outro=x');
+  } finally {
+    ws.close();
+    await new Promise(r => ws.once('close', r));
+  }
+});
+
+test('the cookie of one tunnel does not open another, and a revoked technician loses the cookie at once', async () => {
+  const outro = tecnicos.emitir('Saiu da empresa');
+  const ws = await openTunnel('/_sig3/aaa', globalToken.raw, () => ({ status: 200, headers: {}, body: '' }));
+  const ws2 = await openTunnel('/_sig3/bbb', globalToken.raw, () => ({ status: 200, headers: {}, body: '' }));
+  try {
+    const r = await httpGet(relayPort, { path: '/', headers: { host: 'tunel-aaa.example.com', 'x-sig3-chave': outro.raw }, semChave: true });
+    const cookie = r.headers['set-cookie'].find(c => c.startsWith('sig3tec=')).split(';')[0];
+
+    const noOutro = await httpGet(relayPort, { path: '/', headers: { host: 'tunel-bbb.example.com', cookie }, semChave: true });
+    assert.equal(noOutro.status, 404);
+
+    tecnicos.revogar(outro.id);
+    const depois = await httpGet(relayPort, { path: '/', headers: { host: 'tunel-aaa.example.com', cookie }, semChave: true });
+    assert.equal(depois.status, 404);
+  } finally {
+    for (const w of [ws, ws2]) { w.close(); await new Promise(r => w.once('close', r)); }
+  }
+});
+
+test('an expired cookie is refused', () => {
+  const t = tecnicos.emitir('Expira');
+  const cookie = tecnicos.montarCookie(t, 'zzz', Date.now() - 5 * 60 * 60 * 1000);
+  const valor = cookie.split(';')[0].slice('sig3tec='.length);
+  assert.equal(tecnicos.porCookie(valor, 'zzz'), null);
+  assert.ok(tecnicos.porCookie(tecnicos.montarCookie(t, 'zzz').split(';')[0].slice(8), 'zzz'));
+});
+
 test('protocol 2: request and response bodies travel as raw bytes, untouched', async () => {
   const bytes = Buffer.from([0, 255, 1, 254, 10, 13, 0x80]);
   let recebido;
@@ -249,7 +329,7 @@ test('protocol 2: request and response bodies travel as raw bytes, untouched', a
   try {
     const r = await new Promise((resolve, reject) => {
       const req = http.request({ hostname: '127.0.0.1', port: relayPort, method: 'POST', path: '/eco?x=1',
-        headers: { host: 'tunel-binario.example.com' } }, res => {
+        headers: { host: 'tunel-binario.example.com', 'x-sig3-chave': chaveTecnico.raw } }, res => {
         const partes = [];
         res.on('data', c => partes.push(c));
         res.on('end', () => resolve({ status: res.statusCode, corpo: Buffer.concat(partes) }));
@@ -361,7 +441,7 @@ test('Set-Cookie from a tunnel loses its Domain attribute (one tunnel cannot set
 
   try {
     const r = await httpGet(relayPort, { path: '/', headers: { host: 'biscoito.tunel.example.com' } });
-    assert.deepEqual(r.headers['set-cookie'], ['a=1; Path=/', 'b=2; Path=/; HttpOnly']);
+    assert.deepEqual(r.headers['set-cookie'].filter(c => !c.startsWith('sig3tec=')), ['a=1; Path=/', 'b=2; Path=/; HttpOnly']);
   } finally {
     ws.close();
     await new Promise(r => ws.once('close', r));

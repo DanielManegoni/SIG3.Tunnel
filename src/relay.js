@@ -6,6 +6,7 @@ const { randomUUID }                 = require('crypto');
 const { validate }                   = require('./tokens');
 const { errorResponse }              = require('./errors');
 const { tratarApi, ipDe }            = require('./api');
+const tecnicos                       = require('./tecnicos');
 const fs                             = require('fs');
 const path                           = require('path');
 
@@ -112,12 +113,20 @@ function caminhoLocal(url) {
 // lista, e acrescentando o último era sempre o nginx (127.0.0.1) - todo visitante aparecia igual.
 // O que o visitante manda nesse cabeçalho é forjável e não vai adiante.
 function cabecalhosRepasse(req) {
-  return {
+  return tecnicos.limparCabecalhos({
     ...req.headers,
     'x-forwarded-for': ipDe(req),
     'x-forwarded-host': req.headers.host,
     'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'https',
-  };
+  });
+}
+
+// Só técnico com chave (ou com o cookie que ela rendeu) chega ao SIG3 de um cliente. A conferência
+// vem antes de saber se o túnel existe: quem não tem chave não descobre quais clientes estão no ar.
+function autorizarTecnico(req, tunel) {
+  const auth = tecnicos.autorizar(req, tunel);
+  if (auth?.novoCookie) console.log(`[sig3tunnel] técnico "${auth.tecnico.nome}" entrou em "${tunel}" de ${ipDe(req)}`);
+  return auth;
 }
 
 // Um túnel não planta cookie nos outros: tira o Domain= de todo Set-Cookie, que vira só do host
@@ -160,6 +169,11 @@ function lerQuadro(raw) {
 function responder(entry, status, headersBrutos, corpo) {
   const headers = cookiesSemDominio({ ...(headersBrutos || {}) });
   delete headers['transfer-encoding'];
+  if (entry.cookieTecnico) {
+    const nome = Object.keys(headers).find(h => h.toLowerCase() === 'set-cookie') || 'set-cookie';
+    const atuais = headers[nome] ? [].concat(headers[nome]) : [];
+    headers[nome] = [...atuais, entry.cookieTecnico];
+  }
   entry.res.writeHead(status || 200, headers);
   entry.res.end(corpo && corpo.length ? corpo : undefined);
 }
@@ -172,8 +186,12 @@ function tunnelUpgrade(req, socket, head) {
     return;
   }
   const name = nameFromHost(req.headers.host) || 'default';
-  const peer = peers.get(name);
+  if (!autorizarTecnico(req, name)) {
+    socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    return;
+  }
 
+  const peer = peers.get(name);
   if (!peer || peer.readyState !== WebSocket.OPEN) {
     socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     return;
@@ -245,8 +263,13 @@ function serve(port, host) {
     }
 
     const name = nameFromHost(req.headers.host) || 'default';
-    const peer = peers.get(name);
+    const auth = autorizarTecnico(req, name);
+    if (!auth) {
+      errorResponse(res, 404);
+      return;
+    }
 
+    const peer = peers.get(name);
     if (!peer || peer.readyState !== WebSocket.OPEN) {
       errorResponse(res, 503);
       return;
@@ -285,7 +308,7 @@ function serve(port, host) {
         errorResponse(res, 504);
       }, TEMPO_RESPOSTA_MS);
 
-      queue.set(id, { res, timer, peerName: name });
+      queue.set(id, { res, timer, peerName: name, cookieTecnico: auth.novoCookie });
       // SIG3 que avisou a versão 2 recebe o corpo cru; o anterior, em base64 dentro do JSON.
       if (peer._protocolo >= 2) peer.send(montarQuadro(id, cabecalho, corpo), { binary: true });
       else peer.send(JSON.stringify({ id, ...cabecalho, body: corpo.toString('base64') }));
