@@ -283,16 +283,23 @@ function tratarMensagem(name, raw, isBinary) {
   responder(entry, msg.status, msg.headers, corpo);
 }
 
+// Porta local que o SIG3 do cliente anuncia ao conectar (X-Sig3-Porta). Só informação para o painel: um
+// valor que não seja um inteiro de até 5 dígitos é ignorado.
+function portaAnunciada(req) {
+  const v = String(req.headers['x-sig3-porta'] || '');
+  return /^\d{1,5}$/.test(v) ? Number(v) : undefined;
+}
+
 // Registra conexão/uso no pedido do cliente. Falha de gravação não pode derrubar o túnel.
 const ultimoUsoGravado = new Map(); // nome -> instante da última gravação (no máximo 1 por minuto)
-function registrar(nome, campo) {
+function registrar(nome, campo, extras) {
   try {
     if (campo === 'ultimoUso') {
       const agora = Date.now();
       if (agora - (ultimoUsoGravado.get(nome) || 0) < 60000) return;
       ultimoUsoGravado.set(nome, agora);
     }
-    registrarAtividade(nome, campo);
+    registrarAtividade(nome, campo, Date.now(), extras);
   } catch (e) {
     console.error(`[sig3tunnel] não consegui registrar ${campo} de "${nome}": ${e.message}`);
   }
@@ -453,7 +460,7 @@ function serve(port, host) {
     ws.on('pong', () => { ws._pingPending = false; });
 
     peers.set(name, ws);
-    registrar(name, 'ultimaConexao');
+    registrar(name, 'ultimaConexao', { porta: portaAnunciada(req) });
     console.log(`[sig3tunnel] "${name}" connected from ${ip}`);
 
     // Mensagem de um túnel é entrada não confiável: qualquer exceção aqui derrubaria o relay inteiro.

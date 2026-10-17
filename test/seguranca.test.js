@@ -151,3 +151,20 @@ test('sem X-Real-IP (loopback) os limites por IP não valem: um atacante não bl
   const ws = await abrir('legitimo');   // token certo, mesma origem loopback: tem de conectar
   ws.close();
 });
+
+test('o relay guarda a porta local anunciada no cabeçalho X-Sig3-Porta ao conectar', async () => {
+  const pedidos = require('../src/pedidos');
+  // Pedido entregue com o código do túnel que vai conectar.
+  const segredo = 'k'.repeat(40);
+  const r = pedidos.criar({ descricao: 'Porta ao vivo', segredo, ip: '60.0.0.1', autoAprovar: true });
+  const ent = pedidos.entregar(r.id, segredo);
+  const ws = await new Promise((resolve, reject) => {
+    const w = new WebSocket(`ws://127.0.0.1:${porta}/_sig3/${r.codigo}`, { headers: { authorization: `Bearer ${ent.token}`, 'x-sig3-porta': '5253' } });
+    w.once('open', () => resolve(w)); w.once('error', reject);
+  });
+  await new Promise(res => setTimeout(res, 300));
+  const salvo = pedidos.listar().find(p => p.id === r.id);
+  assert.equal(salvo.porta, 5253);
+  assert.ok(salvo.ultimaConexao);
+  ws.close();
+});

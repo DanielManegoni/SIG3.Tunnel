@@ -185,3 +185,21 @@ test('perfil "user" lê a lista, mas não altera nada; token inválido continua 
   assert.equal(lista.corpo.find(p => p.id === id).descricao, 'Perfil', 'nada mudou');
   assert.equal((await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: { authorization: `Bearer ${assinar(valido({ profile: 'outro' }))}`, 'x-real-ip': '5.5.5.5' } })).status, 403);
 });
+
+test('registrarAtividade guarda a porta local anunciada e ignora valor inválido', async () => {
+  const pedidos = require('../src/pedidos');
+  const auth = { authorization: `Bearer ${assinar(valido())}` };
+  const novo = await pedir('POST', '/api-tunel/pedidos', { corpo: { descricao: 'Porta', segredo: 'z'.repeat(40) } });
+  const { id, codigo } = novo.corpo;
+  await pedir('POST', `/api-tunel/admin/pedidos/${id}/aprovar`, { cabecalhos: auth });
+  await pedir('GET', `/api-tunel/pedidos/${id}`, { cabecalhos: { 'x-pedido-segredo': 'z'.repeat(40) } });
+
+  pedidos.registrarAtividade(codigo, 'ultimaConexao', Date.now(), { porta: 5249 });
+  let c = (await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: auth })).corpo.find(p => p.id === id);
+  assert.equal(c.porta, 5249);
+
+  for (const ruim of [0, 70000, 5249.5, '5249', null, -1]) pedidos.registrarAtividade(codigo, 'ultimaConexao', Date.now(), { porta: ruim });
+  pedidos.registrarAtividade(codigo, 'ultimaConexao');   // SIG3 antigo, sem porta: não apaga a anterior
+  c = (await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: auth })).corpo.find(p => p.id === id);
+  assert.equal(c.porta, 5249);
+});
