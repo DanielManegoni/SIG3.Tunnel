@@ -191,16 +191,14 @@ test('HTTP: JSON inválido e rota desconhecida', async () => {
   assert.equal((await pedir('GET', '/api-tunel/nada-aqui')).status, 404);
 });
 
-test('HTTP: /admin serve o painel HTML no domínio raiz', async () => {
+test('HTTP: /admin não serve mais painel (a administração é pelo NewAdmin)', async () => {
   const r = await new Promise((resolve, reject) => {
     http.get({ host: '127.0.0.1', port: porta, path: '/admin' }, res => {
       let d = ''; res.on('data', c => { d += c; });
       res.on('end', () => resolve({ status: res.statusCode, tipo: res.headers['content-type'], d }));
     }).on('error', reject);
   });
-  assert.equal(r.status, 200);
-  assert.match(r.tipo, /text\/html/);
-  assert.match(r.d, /SIG3\.Tunnel - pedidos/);
+  assert.doesNotMatch(r.d, /SIG3\.Tunnel - pedidos/);
 });
 
 test('limite de pedidos por IP numa hora vale mesmo depois de aprovados', () => {
