@@ -58,7 +58,7 @@ function lerJsonCache(caminho, padrao = []) {
 
 function gravarJson(caminho, dados) {
   const pasta = path.dirname(caminho);
-  fs.mkdirSync(pasta, { recursive: true });
+  fs.mkdirSync(pasta, { recursive: true, mode: 0o700 });   // tokens e chaves: só o dono da pasta lê
   const temporario = `${caminho}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
 
   const fd = fs.openSync(temporario, 'w', 0o600);

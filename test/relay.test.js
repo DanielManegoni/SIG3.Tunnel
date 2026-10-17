@@ -116,12 +116,11 @@ test('request to unconnected tunnel returns 503', async () => {
   assert.ok(!/avelor/i.test(r.body));
 });
 
-test('GET / on root domain with no default tunnel returns splash page', async () => {
-  const r = await httpGet(relayPort, { path: '/', headers: { host: 'tunel.example.com' } });
-  assert.equal(r.status, 200);
-  assert.ok(r.headers['content-type'].includes('text/html'));
-  assert.ok(r.body.includes('sig3tunnel'));
-  assert.ok(r.body.includes('relay running'));
+test('GET / on root domain without a key redirects to the company site', async () => {
+  const r = await httpGet(relayPort, { path: '/', headers: { host: 'tunel.example.com' }, semChave: true });
+  assert.equal(r.status, 302);
+  assert.equal(r.headers.location, 'https://bossoistec.com.br');
+  assert.ok(!r.body.includes('relay'));
 });
 
 test('relay rejects connection with invalid token', async () => {
@@ -233,8 +232,8 @@ test('one-level host tunel-<name>.<domain> routes to the tunnel; the root and ot
     assert.equal(r.status, 200);
     assert.equal(r.body, 'um nivel');
 
-    const raiz = await httpGet(relayPort, { path: '/', headers: { host: 'tunel.example.com' } });
-    assert.ok(raiz.body.includes('relay running'));
+    const raiz = await httpGet(relayPort, { path: '/', headers: { host: 'tunel.example.com' }, semChave: true });
+    assert.equal(raiz.status, 302);
 
     const outro = await httpGet(relayPort, { path: '/test', headers: { host: 'agrovett.example.com' } });
     assert.equal(outro.status, 503);

@@ -15,11 +15,13 @@
 
 const pedidos = require('./pedidos');
 const jwt     = require('./jwt');
+const { criarLimitadorDeFalhas, criarLimitadorDeTaxa } = require('./limite');
+const { CABECALHOS_SEGUROS } = require('./seguranca');
 
 const MAX_JSON = 8 * 1024;
 
 function enviar(res, status, corpo) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(status, { ...CABECALHOS_SEGUROS, 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(corpo));
 }
 
@@ -37,8 +39,11 @@ function lerJson(req) {
       partes.push(c);
     });
     req.on('end', () => {
-      try { resolve(JSON.parse(Buffer.concat(partes).toString('utf8') || '{}')); }
-      catch (e) { reject(e); }
+      try {
+        const obj = JSON.parse(Buffer.concat(partes).toString('utf8') || '{}');
+        if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) reject(new SyntaxError('o corpo precisa ser um objeto'));
+        else resolve(obj);
+      } catch (e) { reject(e); }
     });
     req.on('error', reject);
   });
@@ -53,49 +58,52 @@ function ipDe(req) {
 }
 
 // Admin entra só pelo JWT do NewAdmin (Authorization: Bearer), que só vale com SIG3TUNNEL_JWT_SECRET
-// definido. Emissor e audiência têm o padrão do NewAdmin e podem ser trocados.
-function adminOk(req) {
+// definido. Emissor e audiência têm o padrão do NewAdmin e podem ser trocados. Um segredo curto é
+// recusado: com menos de 32 caracteres dá para adivinhá-lo e forjar um token de admin.
+const SEGREDO_MIN = 32;
+let avisouSegredoCurto = false;
+
+function adminPayload(req) {
   const m = /^Bearer (.+)$/.exec(String(req.headers.authorization || ''));
-  if (!m) return false;
-  return !!jwt.validarAdmin(m[1], {
-    segredo:  process.env.SIG3TUNNEL_JWT_SECRET || '',
+  if (!m) return null;
+  const segredo = process.env.SIG3TUNNEL_JWT_SECRET || '';
+  if (segredo.length < SEGREDO_MIN) {
+    if (segredo && !avisouSegredoCurto) {
+      avisouSegredoCurto = true;
+      console.error(`[sig3tunnel] SIG3TUNNEL_JWT_SECRET tem menos de ${SEGREDO_MIN} caracteres: login de admin DESLIGADO.`);
+    }
+    return null;
+  }
+  return jwt.validarAdmin(m[1], {
+    segredo,
     issuer:   process.env.SIG3TUNNEL_JWT_ISSUER   || 'vsig_backup_manager_issuer',
     audience: process.env.SIG3TUNNEL_JWT_AUDIENCE || 'vsig_backup_manager_audience',
   });
 }
 
+// Token de admin inválido: 10 erros em 15 min bloqueiam o IP por 15 min. Acerto zera a conta.
+const falhasAdmin = criarLimitadorDeFalhas({ max: 10, janelaMs: 15 * 60_000, bloqueioMs: 15 * 60_000 });
+// Segredo de pedido errado (quem tenta adivinhar o segredo de outro pedido).
+const falhasSegredo = criarLimitadorDeFalhas({ max: 10, janelaMs: 15 * 60_000, bloqueioMs: 15 * 60_000 });
+// Teto de chamadas por IP na API toda (inclusive as públicas).
+const taxaApi = criarLimitadorDeTaxa({ max: 120, janelaMs: 60_000 });
 
-// Tentativas de token de admin inválido por IP: 10 erros em 15 min bloqueiam o IP por 15 min. Acerto zera a conta.
-const FALHAS_MAX    = 10;
-const JANELA_MS     = 15 * 60 * 1000;
-const falhasAdmin   = new Map(); // ip -> { falhas, inicio, bloqueadoAte }
-
-function adminBloqueado(ip, agora = Date.now()) {
-  const f = falhasAdmin.get(ip);
-  return !!f && f.bloqueadoAte > agora;
-}
-
-function registrarFalhaAdmin(ip, agora = Date.now()) {
-  const f = falhasAdmin.get(ip);
-  if (!f || agora - f.inicio > JANELA_MS) {
-    falhasAdmin.set(ip, { falhas: 1, inicio: agora, bloqueadoAte: 0 });
-    return;
-  }
-  f.falhas += 1;
-  if (f.falhas >= FALHAS_MAX) f.bloqueadoAte = agora + JANELA_MS;
-}
-
-// Só o acerto zera: quem erra de propósito não ganha tentativas novas.
+// { estado: 'ok', login } | { estado: 'negado' } | { estado: 'bloqueado' }
 function admin(req) {
   const ip = ipDe(req);
-  if (adminBloqueado(ip)) return 'bloqueado';
-  if (!adminOk(req)) {
-    registrarFalhaAdmin(ip);
-    return 'negado';
+  if (falhasAdmin.bloqueado(ip)) return { estado: 'bloqueado' };
+  const payload = adminPayload(req);
+  if (!payload) {
+    falhasAdmin.falha(ip);
+    return { estado: 'negado' };
   }
-  falhasAdmin.delete(ip);
-  return 'ok';
+  falhasAdmin.zerar(ip);
+  return { estado: 'ok', login: String(payload.login || 'admin').slice(0, 60) };
 }
+
+// Trilha de auditoria: quem (login do JWT, não o que veio no corpo) fez o quê, de onde.
+const auditar = (req, login, acao, id) =>
+  console.log(`[sig3tunnel] admin "${login}" ${acao} ${id} de ${ipDe(req)}`);
 
 const STATUS_DE_ERRO = {
   nao_encontrado:      404,
@@ -120,14 +128,16 @@ function cors(req, res) {
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Max-Age', '600');
   return true;
 }
 
 async function tratarApi(req, res, { derrubar = () => {}, conectado = () => false } = {}) {
   const p = new URL(req.url, 'http://relay').pathname;
   const comCors = cors(req, res);
+  if (!taxaApi.permitir(ipDe(req))) return enviar(res, 429, { erro: 'muitas_chamadas', mensagem: 'Muitas chamadas. Espere um minuto.' });
   if (req.method === 'OPTIONS') {
-    res.writeHead(comCors ? 204 : 403);
+    res.writeHead(comCors ? 204 : 403, CABECALHOS_SEGUROS);
     return res.end();
   }
   try {
@@ -144,29 +154,39 @@ async function tratarApi(req, res, { derrubar = () => {}, conectado = () => fals
 
     let m = p.match(/^\/api-tunel\/pedidos\/([0-9a-f]{16})$/);
     if (req.method === 'GET' && m) {
-      return enviar(res, 200, pedidos.entregar(m[1], req.headers['x-pedido-segredo']));
+      const ip = ipDe(req);
+      if (falhasSegredo.bloqueado(ip)) return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas tentativas inválidas. Espere 15 minutos.' });
+      try {
+        return enviar(res, 200, pedidos.entregar(m[1], req.headers['x-pedido-segredo']));
+      } catch (e) {
+        if (e instanceof pedidos.ErroPedido && e.codigo === 'segredo_errado') falhasSegredo.falha(ip);
+        throw e;
+      }
     }
 
     if (p.startsWith('/api-tunel/admin/')) {
-      const estado = admin(req);
-      if (estado === 'bloqueado') return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas senhas erradas. Espere 15 minutos.' });
-      if (estado !== 'ok') return enviar(res, 403, { erro: 'admin_negado' });
+      const acesso = admin(req);
+      if (acesso.estado === 'bloqueado') return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas tentativas inválidas. Espere 15 minutos.' });
+      if (acesso.estado !== 'ok') return enviar(res, 403, { erro: 'admin_negado' });
       if (req.method === 'GET' && p === '/api-tunel/admin/pedidos') return enviar(res, 200, pedidos.listar().map(p => ({ ...p, online: conectado(p.codigo) })));
       m = p.match(/^\/api-tunel\/admin\/pedidos\/([0-9a-f]{16})$/);
       if (req.method === 'DELETE' && m) {
         const r = pedidos.excluir(m[1]);
+        auditar(req, acesso.login, `excluiu o pedido (código ${r.codigo})`, r.id);
         derrubar(r.codigo);
         return enviar(res, 200, { id: r.id, excluido: true });
       }
       if (req.method === 'PATCH' && m) {
         const corpo = await lerJson(req);
-        return enviar(res, 200, pedidos.editar(m[1], { descricao: corpo.descricao, responsavel: corpo.responsavel }));
+        const r = pedidos.editar(m[1], { descricao: corpo.descricao, responsavel: corpo.responsavel });
+        auditar(req, acesso.login, 'editou o pedido', r.id);
+        return enviar(res, 200, r);
       }
       m = p.match(/^\/api-tunel\/admin\/pedidos\/([0-9a-f]{16})\/(aprovar|recusar)$/);
       if (req.method === 'POST' && m) {
-        const r = m[2] === 'aprovar'
-          ? pedidos.aprovar(m[1], Date.now(), (await lerJson(req).catch(() => ({}))).liberadoPor)
-          : pedidos.recusar(m[1]);
+        // Quem liberou é o login do token (não dá para forjar), e não o que o cliente mandar no corpo.
+        const r = m[2] === 'aprovar' ? pedidos.aprovar(m[1], Date.now(), acesso.login) : pedidos.recusar(m[1]);
+        auditar(req, acesso.login, m[2] === 'aprovar' ? 'aprovou o pedido' : 'recusou o pedido', r.id);
         return enviar(res, 200, { id: r.id, status: r.status });
       }
     }

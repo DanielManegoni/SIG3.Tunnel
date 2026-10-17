@@ -73,3 +73,27 @@ ainda é aceito pelo relay.
 - Corpo da requisição: 10 MB (413).
 - Requisições em espera: 256 no total, 64 por túnel (429).
 - Upgrades abertos: 256 no total, 64 por túnel (429).
+
+## Segurança
+
+- **Raiz do relay:** `GET /` sem chave de técnico redireciona (302) para `https://bossoistec.com.br`
+  (`SIG3TUNNEL_REDIRECT_RAIZ` troca o destino). Nenhuma página do relay mostra nome, versão ou estado.
+  Qualquer outro caminho sem chave dá 404 (igual a túnel que não existe).
+- **Bloqueio por IP** (em memória, some ao reiniciar):
+  - chave de técnico errada: 20 erros em 15 min bloqueiam o IP por 15 min (429, mesmo com a chave certa);
+  - token de túnel errado no WebSocket: 30 erros em 15 min bloqueiam por 10 min (fecha 1008 `rate limited`);
+  - token de admin inválido: 10 erros em 15 min, 15 min de bloqueio;
+  - segredo de pedido errado: 10 erros em 15 min, 15 min de bloqueio;
+  - API: no máximo 120 chamadas por minuto por IP.
+  O IP é o `X-Real-IP`, só confiado quando a conexão vem do loopback (o nginx).
+- **O SIG3 do cliente é entrada não confiável.** Mensagem malformada (JSON `null`, status fora de 200-599,
+  cabeçalho com quebra de linha) não derruba o relay: a requisição recebe 502 e o fato vai para o log.
+  `content-length` vem do corpo real; `connection`, `keep-alive`, `transfer-encoding` e afins são descartados.
+  Mensagem de túnel acima de 64 MB fecha a conexão.
+- **Admin:** só JWT do NewAdmin (HS256, perfil `admin`, com `exp`, emissor e audiência) e
+  `SIG3TUNNEL_JWT_SECRET` com **no mínimo 32 caracteres** (menos que isso desliga o admin). "Liberado por" é o
+  login do token. Aprovar, recusar, editar e excluir ficam no log com login e IP.
+- **Cabeçalhos** nas respostas do próprio relay: `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`,
+  `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Strict-Transport-Security`.
+- **Servidor HTTP:** cabeçalhos em 20 s, pedido inteiro em 2 min, no máximo 100 cabeçalhos.
+- **Disco:** pasta de dados `0700`, arquivos `0600`.

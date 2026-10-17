@@ -1,5 +1,7 @@
 'use strict';
 
+const { CABECALHOS_SEGUROS } = require('./seguranca');
+
 const MENSAGENS = {
   400: 'Pedido inválido.',
   404: 'Não encontrado.',
@@ -36,7 +38,7 @@ function pagina(status, mensagem) {
 
 function errorResponse(res, status) {
   if (res.headersSent) return;
-  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.writeHead(status, { ...CABECALHOS_SEGUROS, 'Content-Type': 'text/html; charset=utf-8' });
   res.end(pagina(status, MENSAGENS[status] || 'Ocorreu um erro.'));
 }
 

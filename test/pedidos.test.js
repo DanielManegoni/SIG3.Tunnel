@@ -9,7 +9,7 @@ const path   = require('node:path');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-pedidos-'));
 process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
-process.env.SIG3TUNNEL_JWT_SECRET = 'segredo-de-teste-do-jwt';
+process.env.SIG3TUNNEL_JWT_SECRET = 'segredo-de-teste-do-jwt-com-40-caracteres-ok';
 
 const pedidos = require('../src/pedidos');
 const tokens  = require('../src/tokens');
@@ -238,4 +238,11 @@ test('HTTP: login de admin é bloqueado depois de muitos tokens errados', async 
   const bloqueado = await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: cab });
   assert.equal(bloqueado.status, 429);
   assert.equal(bloqueado.corpo.erro, 'muitas_tentativas');
+});
+
+test('descrição do pedido perde caracteres de controle', () => {
+  const r = pedidos.criar({ descricao: 'Loja\r\n[sig3tunnel] falso\x1b[31m', segredo: SEG_A, ip: '10.0.0.1', agora: AGORA });
+  const p = pedidos.listar().find(x => x.id === r.id);
+  assert.doesNotMatch(p.descricao, /[\x00-\x1f\x7f]/);
+  assert.match(p.descricao, /^Loja/);
 });

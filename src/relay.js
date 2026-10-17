@@ -9,69 +9,14 @@ const { tratarApi, ipDe }            = require('./api');
 const { registrarAtividade }         = require('./pedidos');
 const tecnicos                       = require('./tecnicos');
 const { lerJson }                    = require('./arquivo');
+const { criarLimitadorDeFalhas }     = require('./limite');
+const { CABECALHOS_SEGUROS, REDIRECIONAR_RAIZ_PARA } = require('./seguranca');
 const { TOKENS_FILE, PEDIDOS_FILE, TECNICOS_FILE } = require('./paths');
 
 const MAX_QUEUE    = 256;
 const MAX_BODY     = 10 * 1024 * 1024; // 10 MB
 const PING_INTERVAL = 30_000;
-
-const VERSION = require('../package.json').version;
-
-function splashPage() {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>sig3tunnel</title>
-  <style>
-    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; }
-    body {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      font-family: Georgia, 'Times New Roman', serif;
-      background: #fff;
-      color: #111;
-      border-top: 3px solid #111;
-    }
-    h1 { font-size: clamp(3rem, 10vw, 5rem); font-weight: 400; letter-spacing: -0.03em; line-height: 1; }
-    .meta {
-      margin-top: 1.25rem;
-      font-size: 0.875rem;
-      color: #aaa;
-      letter-spacing: 0.01em;
-    }
-    .ping {
-      margin-top: 0.6rem;
-      font-family: 'Courier New', monospace;
-      font-size: 0.75rem;
-      color: #bbb;
-    }
-    footer {
-      position: fixed;
-      bottom: 1.75rem;
-      left: 0; right: 0;
-      text-align: center;
-      font-size: 0.7rem;
-      color: #999;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    }
-  </style>
-</head>
-<body>
-  <h1>sig3tunnel</h1>
-  <p class="meta">relay running &middot; v${VERSION}</p>
-  <p class="ping"><a href="/_sig3/ping" style="color:inherit;text-decoration:none;">/_sig3/ping</a></p>
-  <footer>SIG3.Tunnel</footer>
-</body>
-</html>
-`;
-}
+const MAX_MENSAGEM_WS = 64 * 1024 * 1024; // maior mensagem aceita de um túnel (o padrão do ws é 100 MB)
 
 const MAX_UPGRADES = 256;
 
@@ -82,6 +27,11 @@ const MAX_UPGRADES_POR_TUNEL = 64;
 // A Cloudflare corta a resposta em 100 s (erro 524). O SIG3 desiste em 90 s (TunelSig3Tunnel) e
 // responde 502; o relay espera um pouco mais, para a resposta do SIG3 chegar antes do 504 daqui.
 const TEMPO_RESPOSTA_MS = 95_000;
+
+// Quem erra a chave de técnico ou o token de túnel várias vezes fica bloqueado por um tempo. Só conta erro
+// de quem APRESENTOU uma credencial: visitante sem nada (scanner) leva 404 e não enche a conta.
+const falhasTecnico = criarLimitadorDeFalhas({ max: 20, janelaMs: 15 * 60_000, bloqueioMs: 15 * 60_000 });
+const falhasToken   = criarLimitadorDeFalhas({ max: 30, janelaMs: 15 * 60_000, bloqueioMs: 10 * 60_000 });
 
 const peers    = new Map(); // name → ws
 const queue    = new Map(); // requestId → { res, timer, peerName }
@@ -121,9 +71,14 @@ function cabecalhosRepasse(req) {
 
 // Só técnico com chave (ou com o cookie que ela rendeu) chega ao SIG3 de um cliente. A conferência
 // vem antes de saber se o túnel existe: quem não tem chave não descobre quais clientes estão no ar.
+// Devolve { tecnico, novoCookie }, null (sem acesso) ou 'bloqueado' (IP com chaves erradas demais).
 function autorizarTecnico(req, tunel) {
+  const ip = ipDe(req);
+  const comChave = !!req.headers[tecnicos.CABECALHO];
+  if (comChave && falhasTecnico.bloqueado(ip)) return 'bloqueado';
   const auth = tecnicos.autorizar(req, tunel);
-  if (auth?.novoCookie) console.log(`[sig3tunnel] técnico "${auth.tecnico.nome}" entrou em "${tunel}" de ${ipDe(req)}`);
+  if (comChave) { if (auth) falhasTecnico.zerar(ip); else falhasTecnico.falha(ip); }
+  if (auth?.novoCookie) console.log(`[sig3tunnel] técnico "${auth.tecnico.nome}" entrou em "${tunel}" de ${ip}`);
   return auth;
 }
 
@@ -164,27 +119,73 @@ function lerQuadro(raw) {
   }
 }
 
+// A resposta vem do SIG3 do cliente e nunca é confiável: status ou cabeçalho malformado lançaria dentro
+// do writeHead, e uma exceção ali derrubava o relay inteiro (todos os túneis). Resposta inválida vira 502.
+const NOME_CABECALHO  = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const CONTROLE        = /[\x00-\x08\x0a-\x1f\x7f]/;
+const SALTA_CABECALHO = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
+
+function cabecalhosDeResposta(brutos) {
+  if (brutos == null) return {};
+  if (typeof brutos !== 'object' || Array.isArray(brutos)) return null;
+  const saida = {};
+  for (const [nome, valor] of Object.entries(brutos)) {
+    if (!NOME_CABECALHO.test(nome)) return null;
+    const lista = Array.isArray(valor) ? valor : [valor];
+    if (!lista.length || !lista.every(v => typeof v === 'string' && !CONTROLE.test(v))) return null;
+    if (SALTA_CABECALHO.has(nome.toLowerCase())) continue;
+    saida[nome] = valor;
+  }
+  return saida;
+}
+
 function responder(entry, status, headersBrutos, corpo) {
-  const headers = cookiesSemDominio({ ...(headersBrutos || {}) });
-  delete headers['transfer-encoding'];
+  const codigo = Number.isInteger(status) && status >= 200 && status <= 599 ? status : null;
+  const limpos = cabecalhosDeResposta(headersBrutos);
+  if (codigo === null || limpos === null) {
+    console.error(`[sig3tunnel] "${entry.peerName}" mandou resposta inválida (status ${JSON.stringify(status)}); devolvido 502`);
+    errorResponse(entry.res, 502);
+    return;
+  }
+  const headers = cookiesSemDominio(limpos);
+  // O tamanho vem do corpo que o relay realmente tem, não do que o cliente declarou (exceto HEAD, sem corpo).
+  const cl = Object.keys(headers).find(h => h.toLowerCase() === 'content-length');
+  const declarado = cl ? String(headers[cl]) : null;
+  if (cl) delete headers[cl];
+  const tamanho = corpo && corpo.length ? corpo.length : 0;
+  if (entry.metodo === 'HEAD') { if (declarado && /^\d+$/.test(declarado)) headers['content-length'] = declarado; }
+  else if (codigo !== 204 && codigo !== 304) headers['content-length'] = String(tamanho);
   if (entry.cookieTecnico) {
     const nome = Object.keys(headers).find(h => h.toLowerCase() === 'set-cookie') || 'set-cookie';
     const atuais = headers[nome] ? [].concat(headers[nome]) : [];
     headers[nome] = [...atuais, entry.cookieTecnico];
   }
-  entry.res.writeHead(status || 200, headers);
-  entry.res.end(corpo && corpo.length ? corpo : undefined);
+  try {
+    entry.res.writeHead(codigo, headers);
+    entry.res.end(tamanho ? corpo : undefined);
+  } catch (e) {
+    console.error(`[sig3tunnel] resposta de "${entry.peerName}" recusada pelo servidor: ${e.message}`);
+    errorResponse(entry.res, 502);
+  }
 }
 
 // Upgrades de WebSocket do navegador (o /_blazor) viajam como bytes crus: o relay liga o socket do
 // navegador ao túnel, e o SIG3 o liga ao localhost. Sem timeout: dura enquanto o socket durar.
 function tunnelUpgrade(req, socket, head) {
+  // Depois do 'upgrade' o http do Node solta o tratamento de erro do socket: sem este, um ECONNRESET do
+  // navegador (que acontece o tempo todo) vira exceção não tratada e derruba o relay.
+  socket.on('error', () => socket.destroy());
   if (!caminhoLocal(req.url)) {
     socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     return;
   }
   const name = nameFromHost(req.headers.host) || 'default';
-  if (!autorizarTecnico(req, name)) {
+  const acesso = autorizarTecnico(req, name);
+  if (acesso === 'bloqueado') {
+    socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    return;
+  }
+  if (!acesso) {
     socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     return;
   }
@@ -226,13 +227,60 @@ function tunnelUpgrade(req, socket, head) {
   };
 
   socket.on('close', finish);
-  socket.on('error', () => { finish(); socket.destroy(); });
+  socket.on('error', () => finish());
 }
 
 // Arquivo de dados ilegível impede o relay de subir: rodar sem ele seria recusar todo cliente e todo
 // técnico sem dizer por quê. Arquivo que ainda não existe é normal (instalação nova).
 function verificarArquivos() {
   for (const f of [TOKENS_FILE, PEDIDOS_FILE, TECNICOS_FILE]) lerJson(f);
+}
+
+// Mensagem recebida do SIG3 de um cliente (túnel <name>): resposta de requisição ou dados de um upgrade.
+function tratarMensagem(name, raw, isBinary) {
+  // Frame binário: 36 bytes de id + dados de um upgrade, ou o quadro de uma resposta HTTP.
+  if (isBinary) {
+    if (raw.length < 36) return;
+    const id = raw.subarray(0, 36).toString('ascii');
+    const up = upgrades.get(id);
+    if (up) {
+      if (up.peerName === name) up.socket.write(raw.subarray(36));
+      return;
+    }
+    const entry = queue.get(id);
+    if (!entry || entry.peerName !== name) return;
+    const quadro = lerQuadro(raw);
+    if (!quadro || typeof quadro.cabecalho !== 'object' || quadro.cabecalho === null) return;
+    queue.delete(id);
+    clearTimeout(entry.timer);
+    responder(entry, quadro.cabecalho.status, quadro.cabecalho.headers, quadro.corpo);
+    return;
+  }
+
+  let msg;
+  try { msg = JSON.parse(raw); } catch { return; }
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return;
+
+  if (msg.type === 'up-data' || msg.type === 'up-close') {
+    const up = upgrades.get(msg.id);
+    if (!up || up.peerName !== name) return;
+    if (msg.type === 'up-close') {
+      upgrades.delete(msg.id);
+      up.socket.end();
+    } else if (typeof msg.data === 'string') {
+      up.socket.write(Buffer.from(msg.data, 'base64'));
+    }
+    return;
+  }
+
+  // Só o túnel que recebeu a requisição pode respondê-la.
+  const entry = queue.get(msg.id);
+  if (!entry || entry.peerName !== name) return;
+
+  queue.delete(msg.id);
+  clearTimeout(entry.timer);
+  const corpo = typeof msg.body === 'string' && msg.body ? Buffer.from(msg.body, 'base64') : null;
+  responder(entry, msg.status, msg.headers, corpo);
 }
 
 // Registra conexão/uso no pedido do cliente. Falha de gravação não pode derrubar o túnel.
@@ -273,16 +321,19 @@ function serve(port, host) {
       return;
     }
 
-    // Root domain with no subdomain and no default tunnel → splash page.
-    if (req.url === '/' && nameFromHost(req.headers.host) === null && !peers.has('default')) {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(splashPage());
-      return;
-    }
-
     const name = nameFromHost(req.headers.host) || 'default';
     const auth = autorizarTecnico(req, name);
+    if (auth === 'bloqueado') {
+      errorResponse(res, 429);
+      return;
+    }
     if (!auth) {
+      // Endereço do relay aberto no navegador, sem chave: vai para o site da empresa, sem revelar nada.
+      if (nameFromHost(req.headers.host) === null && req.url.split('?')[0] === '/') {
+        res.writeHead(302, { ...CABECALHOS_SEGUROS, Location: REDIRECIONAR_RAIZ_PARA, 'Content-Length': '0' });
+        res.end();
+        return;
+      }
       errorResponse(res, 404);
       return;
     }
@@ -328,7 +379,7 @@ function serve(port, host) {
         errorResponse(res, 504);
       }, TEMPO_RESPOSTA_MS);
 
-      queue.set(id, { res, timer, peerName: name, cookieTecnico: auth.novoCookie });
+      queue.set(id, { res, timer, peerName: name, cookieTecnico: auth.novoCookie, metodo: req.method });
       // SIG3 que avisou a versão 2 recebe o corpo cru; o anterior, em base64 dentro do JSON.
       if (peer._protocolo >= 2) peer.send(montarQuadro(id, cabecalho, corpo), { binary: true });
       else peer.send(JSON.stringify({ id, ...cabecalho, body: corpo.toString('base64') }));
@@ -337,7 +388,12 @@ function serve(port, host) {
     req.on('error', () => errorResponse(res, 400));
   });
 
-  const wss = new WebSocketServer({ noServer: true });
+  // Contra conexão lenta (slowloris): o cabeçalho tem de chegar em 20 s e o pedido inteiro em 2 min.
+  server.headersTimeout  = 20_000;
+  server.requestTimeout  = 120_000;
+  server.maxHeadersCount = 100;
+
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MENSAGEM_WS });
 
   server.on('upgrade', (req, socket, head) => {
     const path = req.url || '';
@@ -374,11 +430,18 @@ function serve(port, host) {
     }
 
     const name = nameFromPath(rawPath);
+    const ip   = ipDe(req);
 
+    if (falhasToken.bloqueado(ip)) {
+      ws.close(1008, 'rate limited');
+      return;
+    }
     if (!token || !validate(token, name)) {
+      if (token) falhasToken.falha(ip);
       ws.close(1008, 'unauthorized');
       return;
     }
+    falhasToken.zerar(ip);
 
     if (peers.has(name) && peers.get(name).readyState === WebSocket.OPEN) {
       ws.close(1008, 'name already in use');
@@ -393,48 +456,13 @@ function serve(port, host) {
     registrar(name, 'ultimaConexao');
     console.log(`[sig3tunnel] "${name}" connected from ${req.socket.remoteAddress}`);
 
+    // Mensagem de um túnel é entrada não confiável: qualquer exceção aqui derrubaria o relay inteiro.
     ws.on('message', (raw, isBinary) => {
-      // Frame binário: 36 bytes de id + dados de um upgrade, ou o quadro de uma resposta HTTP.
-      if (isBinary) {
-        if (raw.length < 36) return;
-        const id = raw.subarray(0, 36).toString('ascii');
-        const up = upgrades.get(id);
-        if (up) {
-          if (up.peerName === name) up.socket.write(raw.subarray(36));
-          return;
-        }
-        const entry = queue.get(id);
-        if (!entry || entry.peerName !== name) return;
-        const quadro = lerQuadro(raw);
-        if (!quadro) return;
-        queue.delete(id);
-        clearTimeout(entry.timer);
-        responder(entry, quadro.cabecalho.status, quadro.cabecalho.headers, quadro.corpo);
-        return;
+      try {
+        tratarMensagem(name, raw, isBinary);
+      } catch (e) {
+        console.error(`[sig3tunnel] "${name}" mandou mensagem inválida: ${e.message}`);
       }
-
-      let msg;
-      try { msg = JSON.parse(raw); } catch { return; }
-
-      if (msg.type === 'up-data' || msg.type === 'up-close') {
-        const up = upgrades.get(msg.id);
-        if (!up || up.peerName !== name) return;
-        if (msg.type === 'up-close') {
-          upgrades.delete(msg.id);
-          up.socket.end();
-        } else {
-          up.socket.write(Buffer.from(msg.data, 'base64'));
-        }
-        return;
-      }
-
-      // Só o túnel que recebeu a requisição pode respondê-la.
-      const entry = queue.get(msg.id);
-      if (!entry || entry.peerName !== name) return;
-
-      queue.delete(msg.id);
-      clearTimeout(entry.timer);
-      responder(entry, msg.status, msg.headers, msg.body ? Buffer.from(msg.body, 'base64') : null);
     });
 
     ws.on('close', () => {

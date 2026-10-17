@@ -10,7 +10,7 @@ const PEDIDOS_FILE = path.join(CONFIG_DIR, 'pedidos.json');
 const TECNICOS_FILE = path.join(CONFIG_DIR, 'tecnicos.json');
 
 function ensureDir() {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
 }
 
 module.exports = { CONFIG_DIR, TOKENS_FILE, PEDIDOS_FILE, TECNICOS_FILE, ensureDir };

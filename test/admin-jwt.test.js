@@ -10,7 +10,7 @@ const crypto = require('node:crypto');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-jwt-'));
 process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
-process.env.SIG3TUNNEL_JWT_SECRET = 'segredo-de-teste-do-jwt';
+process.env.SIG3TUNNEL_JWT_SECRET = 'segredo-de-teste-do-jwt-com-40-caracteres-ok';
 
 const { validarAdmin } = require('../src/jwt');
 const { serve } = require('../src/relay');
@@ -126,4 +126,45 @@ test('registrarAtividade grava conexão e uso só em pedido entregue, e a lista 
   assert.equal(c.ultimaConexao, '2026-10-17T12:00:00.000Z');
   assert.equal(c.ultimoUso, '2026-10-17T12:00:01.000Z');
   assert.equal(c.online, false);
+});
+
+test('segredo de JWT curto (< 32) desliga o login de admin', async () => {
+  const antigo = process.env.SIG3TUNNEL_JWT_SECRET;
+  process.env.SIG3TUNNEL_JWT_SECRET = 'curto';
+  try {
+    const r = await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: { authorization: `Bearer ${assinar(valido(), 'curto')}`, 'x-real-ip': '4.4.4.4' } });
+    assert.equal(r.status, 403);
+  } finally { process.env.SIG3TUNNEL_JWT_SECRET = antigo; }
+});
+
+test('"liberado por" é o login do token, não o que vier no corpo', async () => {
+  const auth = { authorization: `Bearer ${assinar(valido({ login: 'Maria' }))}` };
+  const novo = await pedir('POST', '/api-tunel/pedidos', { corpo: { descricao: 'Quem', segredo: 'q'.repeat(40) } });
+  await pedir('POST', `/api-tunel/admin/pedidos/${novo.corpo.id}/aprovar`, { corpo: { liberadoPor: 'Fulano Forjado' }, cabecalhos: auth });
+  const lista = await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: auth });
+  assert.equal(lista.corpo.find(p => p.id === novo.corpo.id).liberadoPor, 'Maria');
+});
+
+test('corpo JSON que não é objeto é recusado com 400', async () => {
+  for (const corpo of ['null', '[1]', '"x"', '42']) {
+    const r = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: porta, method: 'POST', path: '/api-tunel/pedidos', headers: { 'content-type': 'application/json', 'x-real-ip': '3.3.3.3' } },
+        res => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+      req.on('error', reject); req.end(corpo);
+    });
+    assert.equal(r, 400, corpo);
+  }
+});
+
+test('adivinhar o segredo de um pedido bloqueia o IP', async () => {
+  const novo = await pedir('POST', '/api-tunel/pedidos', { corpo: { descricao: 'Alvo', segredo: 'a'.repeat(40) }, cabecalhos: { 'x-real-ip': '2.2.2.2' } });
+  let ultimo;
+  for (let i = 0; i < 12; i++) ultimo = (await pedir('GET', `/api-tunel/pedidos/${novo.corpo.id}`, { cabecalhos: { 'x-pedido-segredo': 'b'.repeat(40), 'x-real-ip': '1.1.1.1' } })).status;
+  assert.equal(ultimo, 429);
+});
+
+test('taxa: mais de 120 chamadas por minuto do mesmo IP levam 429', async () => {
+  let ultimo;
+  for (let i = 0; i < 125; i++) ultimo = (await pedir('GET', '/api-tunel/nada', { cabecalhos: { 'x-real-ip': '6.6.6.6' } })).status;
+  assert.equal(ultimo, 429);
 });
