@@ -4,14 +4,15 @@
 //
 //   POST /api-tunel/pedidos                       { descricao, segredo }        -> 201 { id, codigo, status }
 //   GET  /api-tunel/pedidos/<id>                  cabecalho X-Pedido-Segredo    -> { status, token? }
-//   GET  /api-tunel/admin/pedidos                 cabecalho X-Admin-Senha       -> lista
-//   POST /api-tunel/admin/pedidos/<id>/aprovar    cabecalho X-Admin-Senha
-//   POST /api-tunel/admin/pedidos/<id>/recusar    cabecalho X-Admin-Senha
+//   GET    /api-tunel/admin/pedidos                 Authorization: Bearer <jwt>  -> lista
+//   PATCH  /api-tunel/admin/pedidos/<id>            { descricao?, responsavel? }
+//   DELETE /api-tunel/admin/pedidos/<id>            revoga o token e derruba o tunel
+//   POST   /api-tunel/admin/pedidos/<id>/aprovar
+//   POST   /api-tunel/admin/pedidos/<id>/recusar
 //
-// Admin desligado se SIG3TUNNEL_ADMIN_SENHA estiver vazia.
+// Admin so por JWT do NewAdmin (perfil admin). Desligado se SIG3TUNNEL_JWT_SECRET estiver vazio.
 // SIG3TUNNEL_AUTO_APROVAR=1 aprova sem humano: SO PARA TESTE. Com ele ligado, qualquer um recebe token.
 
-const crypto  = require('crypto');
 const pedidos = require('./pedidos');
 const jwt     = require('./jwt');
 
@@ -51,9 +52,9 @@ function ipDe(req) {
   return (local && req.headers['x-real-ip']) || origem;
 }
 
-// Admin entra por senha (X-Admin-Senha) ou pelo JWT do NewAdmin (Authorization: Bearer), que só vale
-// com SIG3TUNNEL_JWT_SECRET definido. Emissor e audiência têm o padrão do NewAdmin e podem ser trocados.
-function adminPorJwt(req) {
+// Admin entra só pelo JWT do NewAdmin (Authorization: Bearer), que só vale com SIG3TUNNEL_JWT_SECRET
+// definido. Emissor e audiência têm o padrão do NewAdmin e podem ser trocados.
+function adminOk(req) {
   const m = /^Bearer (.+)$/.exec(String(req.headers.authorization || ''));
   if (!m) return false;
   return !!jwt.validarAdmin(m[1], {
@@ -63,16 +64,8 @@ function adminPorJwt(req) {
   });
 }
 
-function adminOk(req) {
-  if (adminPorJwt(req)) return true;
-  const senha = process.env.SIG3TUNNEL_ADMIN_SENHA || '';
-  if (!senha) return false;
-  const a = Buffer.from(senha);
-  const b = Buffer.from(String(req.headers['x-admin-senha'] || ''));
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
 
-// Tentativas de senha de admin por IP: 10 erros em 15 min bloqueiam o IP por 15 min. Acerto zera a conta.
+// Tentativas de token de admin inválido por IP: 10 erros em 15 min bloqueiam o IP por 15 min. Acerto zera a conta.
 const FALHAS_MAX    = 10;
 const JANELA_MS     = 15 * 60 * 1000;
 const falhasAdmin   = new Map(); // ip -> { falhas, inicio, bloqueadoAte }
@@ -125,7 +118,7 @@ function cors(req, res) {
   if (!origem || !lista.includes(origem)) return false;
   res.setHeader('Access-Control-Allow-Origin', origem);
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Admin-Senha');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   return true;
 }

@@ -9,7 +9,7 @@ const path   = require('node:path');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-pedidos-'));
 process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
-process.env.SIG3TUNNEL_ADMIN_SENHA = 'senha-de-teste-123';
+process.env.SIG3TUNNEL_JWT_SECRET = 'segredo-de-teste-do-jwt';
 
 const pedidos = require('../src/pedidos');
 const tokens  = require('../src/tokens');
@@ -17,6 +17,11 @@ const { serve } = require('../src/relay');
 
 const SEG_A = 'a'.repeat(40);
 const SEG_B = 'b'.repeat(40);
+function jwtAdmin() {
+  const u = o => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const corpo = `${u({ alg: 'HS256', typ: 'JWT' })}.${u({ profile: 'admin', iss: 'vsig_backup_manager_issuer', aud: 'vsig_backup_manager_audience', exp: Math.floor(Date.now() / 1000) + 3600 })}`;
+  return `${corpo}.${require('node:crypto').createHmac('sha256', process.env.SIG3TUNNEL_JWT_SECRET).update(corpo).digest('base64url')}`;
+}
 const AGORA = Date.parse('2026-10-06T12:00:00Z');
 
 beforeEach(() => {
@@ -158,11 +163,11 @@ test('HTTP: pedir, consultar, aprovar pelo admin e pegar o token', async () => {
   assert.equal(antes.corpo.status, 'pendente');
 
   const sem = await pedir('POST', `/api-tunel/admin/pedidos/${id}/aprovar`);
-  assert.equal(sem.status, 403, 'aprovar sem senha de admin é negado');
+  assert.equal(sem.status, 403, 'aprovar sem token de admin é negado');
 
   const ok = await pedir('POST', `/api-tunel/admin/pedidos/${id}/aprovar`, {
     corpo: { liberadoPor: 'Daniel' },
-    cabecalhos: { 'x-admin-senha': 'senha-de-teste-123' },
+    cabecalhos: { authorization: `Bearer ${jwtAdmin()}` },
   });
   assert.equal(ok.status, 200);
 
@@ -174,9 +179,9 @@ test('HTTP: pedir, consultar, aprovar pelo admin e pegar o token', async () => {
   assert.ok(tokens.validate(entregue.corpo.token, codigo));
 });
 
-test('HTTP: lista de admin sem senha é negada e a senha errada também', async () => {
+test('HTTP: lista de admin sem token é negada e o token errado também', async () => {
   assert.equal((await pedir('GET', '/api-tunel/admin/pedidos')).status, 403);
-  assert.equal((await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: { 'x-admin-senha': 'errada' } })).status, 403);
+  assert.equal((await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: { authorization: 'Bearer lixo' } })).status, 403);
 });
 
 test('HTTP: JSON inválido e rota desconhecida', async () => {
@@ -225,8 +230,8 @@ test('recusado antigo é podado do arquivo na próxima criação', () => {
   assert.ok(!ids.includes('aaaaaaaaaaaaaaaa'), 'o recusado antigo saiu');
 });
 
-test('HTTP: login de admin é bloqueado depois de muitas senhas erradas', async () => {
-  const cab = { 'x-real-ip': '7.7.7.7', 'x-admin-senha': 'errada' };
+test('HTTP: login de admin é bloqueado depois de muitos tokens errados', async () => {
+  const cab = { 'x-real-ip': '7.7.7.7', authorization: 'Bearer lixo' };
   for (let i = 0; i < 10; i++) {
     assert.equal((await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: cab })).status, 403);
   }

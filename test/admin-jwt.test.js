@@ -10,7 +10,6 @@ const crypto = require('node:crypto');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sig3tunnel-jwt-'));
 process.env.SIG3TUNNEL_CONFIG_DIR = tmp;
-process.env.SIG3TUNNEL_ADMIN_SENHA = 'senha-de-teste-123';
 process.env.SIG3TUNNEL_JWT_SECRET = 'segredo-de-teste-do-jwt';
 
 const { validarAdmin } = require('../src/jwt');
