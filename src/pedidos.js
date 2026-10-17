@@ -163,6 +163,16 @@ function editar(id, { descricao, responsavel } = {}, agora = Date.now()) {
   return publico;
 }
 
+// Exclui o cliente: some da lista e o token dele é revogado (a chave deixa de valer).
+function excluir(id) {
+  const lista = lerPedidos();
+  const p = lista.find(x => x.id === id);
+  if (!p) throw new ErroPedido('nao_encontrado', 'Pedido não encontrado.');
+  if (p.tokenId) tokens.revoke(p.tokenId);
+  gravarPedidos(lista.filter(x => x.id !== id));
+  return { id: p.id, codigo: p.codigo };
+}
+
 // Visão do administrador: sem o hash do segredo.
 function listar(agora = Date.now()) {
   return lerPedidos().map(p => {
@@ -172,4 +182,4 @@ function listar(agora = Date.now()) {
   });
 }
 
-module.exports = { criar, aprovar, recusar, entregar, editar, listar, ErroPedido, MAX_PENDENTES_POR_IP, MAX_CRIADOS_IP_HORA, VALIDADE_MS, PODA_MS };
+module.exports = { criar, aprovar, recusar, entregar, editar, excluir, listar, ErroPedido, MAX_PENDENTES_POR_IP, MAX_CRIADOS_IP_HORA, VALIDADE_MS, PODA_MS };

@@ -86,3 +86,23 @@ test('HTTP: editar nome e responsável com o JWT, e CORS do NewAdmin', async () 
   const estranho = await pedir('OPTIONS', `/api-tunel/admin/pedidos/${id}`, { cabecalhos: { origin: 'https://mau.com' } });
   assert.equal(estranho.status, 403);
 });
+
+test('HTTP: excluir apaga o cliente e revoga o token', async () => {
+  const tokens = require('../src/tokens');
+  const auth = { authorization: `Bearer ${assinar(valido())}` };
+  const novo = await pedir('POST', '/api-tunel/pedidos', { corpo: { descricao: 'Apagar', segredo: SEG } });
+  const { id, codigo } = novo.corpo;
+  await pedir('POST', `/api-tunel/admin/pedidos/${id}/aprovar`, { cabecalhos: auth });
+  const ent = await pedir('GET', `/api-tunel/pedidos/${id}`, { cabecalhos: { 'x-pedido-segredo': SEG } });
+  assert.ok(tokens.validate(ent.corpo.token, codigo));
+
+  const sem = await pedir('DELETE', `/api-tunel/admin/pedidos/${id}`);
+  assert.equal(sem.status, 403);
+  const ok = await pedir('DELETE', `/api-tunel/admin/pedidos/${id}`, { cabecalhos: auth });
+  assert.equal(ok.status, 200);
+
+  assert.equal(tokens.validate(ent.corpo.token, codigo), null);
+  const lista = await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: auth });
+  assert.equal(lista.corpo.some(p => p.id === id), false);
+  assert.equal((await pedir('DELETE', `/api-tunel/admin/pedidos/${id}`, { cabecalhos: auth })).status, 404);
+});

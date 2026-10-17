@@ -243,7 +243,8 @@ function serve(port, host) {
     }
 
     if ((req.url || '').startsWith('/api-tunel/')) {
-      tratarApi(req, res);
+      // derrubar: fecha o túnel conectado com esse nome (usado ao excluir um cliente)
+      tratarApi(req, res, { derrubar: nome => { const ws = peers.get(nome); if (ws) ws.close(1008, 'tunnel removed'); } });
       return;
     }
 

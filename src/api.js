@@ -126,11 +126,11 @@ function cors(req, res) {
   res.setHeader('Access-Control-Allow-Origin', origem);
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Admin-Senha');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   return true;
 }
 
-async function tratarApi(req, res) {
+async function tratarApi(req, res, { derrubar = () => {} } = {}) {
   const p = new URL(req.url, 'http://relay').pathname;
   const comCors = cors(req, res);
   if (req.method === 'OPTIONS') {
@@ -160,6 +160,11 @@ async function tratarApi(req, res) {
       if (estado !== 'ok') return enviar(res, 403, { erro: 'admin_negado' });
       if (req.method === 'GET' && p === '/api-tunel/admin/pedidos') return enviar(res, 200, pedidos.listar());
       m = p.match(/^\/api-tunel\/admin\/pedidos\/([0-9a-f]{16})$/);
+      if (req.method === 'DELETE' && m) {
+        const r = pedidos.excluir(m[1]);
+        derrubar(r.codigo);
+        return enviar(res, 200, { id: r.id, excluido: true });
+      }
       if (req.method === 'PATCH' && m) {
         const corpo = await lerJson(req);
         return enviar(res, 200, pedidos.editar(m[1], { descricao: corpo.descricao, responsavel: corpo.responsavel }));
