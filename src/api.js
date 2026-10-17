@@ -78,6 +78,7 @@ function adminPayload(req) {
     segredo,
     issuer:   process.env.SIG3TUNNEL_JWT_ISSUER   || 'vsig_backup_manager_issuer',
     audience: process.env.SIG3TUNNEL_JWT_AUDIENCE || 'vsig_backup_manager_audience',
+    perfis:   ['admin', 'user'],   // qualquer usuário do NewAdmin autenticado entra; o que ele PODE fazer é conferido por rota
   });
 }
 
@@ -88,7 +89,7 @@ const falhasSegredo = criarLimitadorDeFalhas({ max: 10, janelaMs: 15 * 60_000, b
 // Teto de chamadas por IP na API toda (inclusive as públicas).
 const taxaApi = criarLimitadorDeTaxa({ max: 120, janelaMs: 60_000 });
 
-// { estado: 'ok', login } | { estado: 'negado' } | { estado: 'bloqueado' }
+// { estado: 'ok', login, perfil } | { estado: 'negado' } | { estado: 'bloqueado' }
 function admin(req) {
   const ip = ipDe(req);
   if (falhasAdmin.bloqueado(ip)) return { estado: 'bloqueado' };
@@ -98,7 +99,7 @@ function admin(req) {
     return { estado: 'negado' };
   }
   falhasAdmin.zerar(ip);
-  return { estado: 'ok', login: String(payload.login || 'admin').slice(0, 60) };
+  return { estado: 'ok', login: String(payload.login || 'admin').slice(0, 60), perfil: payload.profile };
 }
 
 // Trilha de auditoria: quem (login do JWT, não o que veio no corpo) fez o quê, de onde.
@@ -168,6 +169,9 @@ async function tratarApi(req, res, { derrubar = () => {}, conectado = () => fals
       const acesso = admin(req);
       if (acesso.estado === 'bloqueado') return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas tentativas inválidas. Espere 15 minutos.' });
       if (acesso.estado !== 'ok') return enviar(res, 403, { erro: 'admin_negado' });
+      // Usuário comum só LÊ a lista; aprovar, recusar, editar e excluir são do perfil admin.
+      if (!(req.method === 'GET' && p === '/api-tunel/admin/pedidos') && acesso.perfil !== 'admin')
+        return enviar(res, 403, { erro: 'somente_admin', mensagem: 'Só administradores podem alterar clientes do túnel.' });
       if (req.method === 'GET' && p === '/api-tunel/admin/pedidos') return enviar(res, 200, pedidos.listar().map(p => ({ ...p, online: conectado(p.codigo) })));
       m = p.match(/^\/api-tunel\/admin\/pedidos\/([0-9a-f]{16})$/);
       if (req.method === 'DELETE' && m) {

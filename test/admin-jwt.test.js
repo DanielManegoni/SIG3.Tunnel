@@ -168,3 +168,20 @@ test('taxa: mais de 120 chamadas por minuto do mesmo IP levam 429', async () => 
   for (let i = 0; i < 125; i++) ultimo = (await pedir('GET', '/api-tunel/nada', { cabecalhos: { 'x-real-ip': '6.6.6.6' } })).status;
   assert.equal(ultimo, 429);
 });
+
+test('perfil "user" lê a lista, mas não altera nada; token inválido continua negado', async () => {
+  const user = { authorization: `Bearer ${assinar(valido({ profile: 'user', login: 'Paula' }))}` };
+  const adm  = { authorization: `Bearer ${assinar(valido())}` };
+  const novo = await pedir('POST', '/api-tunel/pedidos', { corpo: { descricao: 'Perfil', segredo: 'p'.repeat(40) } });
+  const id = novo.corpo.id;
+
+  assert.equal((await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: user })).status, 200);
+  assert.equal((await pedir('PATCH', `/api-tunel/admin/pedidos/${id}`, { corpo: { descricao: 'X' }, cabecalhos: user })).status, 403);
+  assert.equal((await pedir('POST', `/api-tunel/admin/pedidos/${id}/aprovar`, { cabecalhos: user })).status, 403);
+  assert.equal((await pedir('POST', `/api-tunel/admin/pedidos/${id}/recusar`, { cabecalhos: user })).status, 403);
+  assert.equal((await pedir('DELETE', `/api-tunel/admin/pedidos/${id}`, { cabecalhos: user })).status, 403);
+
+  const lista = await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: adm });
+  assert.equal(lista.corpo.find(p => p.id === id).descricao, 'Perfil', 'nada mudou');
+  assert.equal((await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: { authorization: `Bearer ${assinar(valido({ profile: 'outro' }))}`, 'x-real-ip': '5.5.5.5' } })).status, 403);
+});

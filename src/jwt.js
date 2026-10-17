@@ -7,8 +7,8 @@ const crypto = require('crypto');
 
 const b64 = s => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 
-// Devolve o payload se o token é válido e o perfil é admin; senão null.
-function validarAdmin(token, { segredo, issuer, audience, agora = Date.now() } = {}) {
+// Devolve o payload se o token é válido e o perfil está em `perfis` (padrão: só admin); senão null.
+function validarAdmin(token, { segredo, issuer, audience, agora = Date.now(), perfis = ['admin'] } = {}) {
   if (!segredo || typeof token !== 'string') return null;
   const partes = token.split('.');
   if (partes.length !== 3) return null;
@@ -29,7 +29,7 @@ function validarAdmin(token, { segredo, issuer, audience, agora = Date.now() } =
   if (typeof payload.nbf === 'number' && s < payload.nbf) return null;
   if (issuer && payload.iss !== issuer) return null;
   if (audience && payload.aud !== audience) return null;
-  if (payload.profile !== 'admin') return null;
+  if (!perfis.includes(payload.profile)) return null;
   return payload;
 }
 
