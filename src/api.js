@@ -116,7 +116,7 @@ const STATUS_DE_ERRO = {
 };
 
 // CORS só para o NewAdmin (origem fixa). SIG3TUNNEL_CORS_ORIGINS (vírgula) acrescenta outras, p.ex. em teste.
-const ORIGENS_FIXAS = ['https://app.bossoistec.com.br'];
+const ORIGENS_FIXAS = ['https://app.bossoistec.com.br', 'http://localhost:5173'];   // 5173 = vite do NewAdmin em desenvolvimento
 
 function cors(req, res) {
   const extras = (process.env.SIG3TUNNEL_CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
