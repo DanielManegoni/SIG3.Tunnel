@@ -5,6 +5,19 @@
 
 const MAX_IPS = 10_000;
 
+// Loopback = o nginx sem X-Real-IP: não dá para saber QUEM é. Limitar por esse "IP" juntaria todo mundo
+// numa conta só, e um atacante bloquearia todos os clientes. Então não se limita, e avisa uma vez.
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+let avisouLoopback = false;
+function limitavel(ip) {
+  if (!LOOPBACK.has(ip)) return true;
+  if (!avisouLoopback) {
+    avisouLoopback = true;
+    console.error('[sig3tunnel] requisição sem X-Real-IP (IP de loopback): limites por IP DESLIGADOS para ela. Confira o proxy_set_header X-Real-IP do nginx.');
+  }
+  return false;
+}
+
 function podar(mapa, agora, vivo) {
   if (mapa.size < MAX_IPS) return;
   for (const [ip, v] of mapa) if (!vivo(v, agora)) mapa.delete(ip);
@@ -16,8 +29,9 @@ function criarLimitadorDeFalhas({ max, janelaMs, bloqueioMs }) {
   const mapa = new Map(); // ip -> { falhas, inicio, bloqueadoAte }
   const vivo = (v, agora) => v.bloqueadoAte > agora || agora - v.inicio <= janelaMs;
   return {
-    bloqueado: (ip, agora = Date.now()) => (mapa.get(ip)?.bloqueadoAte || 0) > agora,
+    bloqueado: (ip, agora = Date.now()) => limitavel(ip) && (mapa.get(ip)?.bloqueadoAte || 0) > agora,
     falha(ip, agora = Date.now()) {
+      if (!limitavel(ip)) return;
       const f = mapa.get(ip);
       if (!f || (f.bloqueadoAte <= agora && agora - f.inicio > janelaMs)) {
         podar(mapa, agora, vivo);
@@ -38,6 +52,7 @@ function criarLimitadorDeTaxa({ max, janelaMs }) {
   return {
     // true = pode passar
     permitir(ip, agora = Date.now()) {
+      if (!limitavel(ip)) return true;
       const v = mapa.get(ip);
       if (!v || agora - v.inicio > janelaMs) {
         podar(mapa, agora, vivo);

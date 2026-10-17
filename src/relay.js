@@ -454,7 +454,7 @@ function serve(port, host) {
 
     peers.set(name, ws);
     registrar(name, 'ultimaConexao');
-    console.log(`[sig3tunnel] "${name}" connected from ${req.socket.remoteAddress}`);
+    console.log(`[sig3tunnel] "${name}" connected from ${ip}`);
 
     // Mensagem de um túnel é entrada não confiável: qualquer exceção aqui derrubaria o relay inteiro.
     ws.on('message', (raw, isBinary) => {

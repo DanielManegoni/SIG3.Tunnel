@@ -137,3 +137,17 @@ test('chave do técnico e cookie do relay não chegam ao SIG3 do cliente', async
   assert.equal(visto.cookie, 'sessao=1');
   ws.close();
 });
+
+test('sem X-Real-IP (loopback) os limites por IP não valem: um atacante não bloqueia todo mundo', async () => {
+  let motivo;
+  for (let i = 0; i < 40; i++) {
+    motivo = await new Promise(resolve => {
+      const ws = new WebSocket(`ws://127.0.0.1:${porta}/_sig3/y`, { headers: { authorization: 'Bearer sig3_errado' } });
+      ws.once('close', (c, m) => resolve(String(m)));
+      ws.once('error', () => resolve('erro'));
+    });
+  }
+  assert.match(motivo, /unauthorized/, 'continua unauthorized, nunca rate limited');
+  const ws = await abrir('legitimo');   // token certo, mesma origem loopback: tem de conectar
+  ws.close();
+});
