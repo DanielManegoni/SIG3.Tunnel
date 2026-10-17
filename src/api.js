@@ -123,7 +123,7 @@ function cors(req, res) {
   return true;
 }
 
-async function tratarApi(req, res, { derrubar = () => {} } = {}) {
+async function tratarApi(req, res, { derrubar = () => {}, conectado = () => false } = {}) {
   const p = new URL(req.url, 'http://relay').pathname;
   const comCors = cors(req, res);
   if (req.method === 'OPTIONS') {
@@ -151,7 +151,7 @@ async function tratarApi(req, res, { derrubar = () => {} } = {}) {
       const estado = admin(req);
       if (estado === 'bloqueado') return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas senhas erradas. Espere 15 minutos.' });
       if (estado !== 'ok') return enviar(res, 403, { erro: 'admin_negado' });
-      if (req.method === 'GET' && p === '/api-tunel/admin/pedidos') return enviar(res, 200, pedidos.listar());
+      if (req.method === 'GET' && p === '/api-tunel/admin/pedidos') return enviar(res, 200, pedidos.listar().map(p => ({ ...p, online: conectado(p.codigo) })));
       m = p.match(/^\/api-tunel\/admin\/pedidos\/([0-9a-f]{16})$/);
       if (req.method === 'DELETE' && m) {
         const r = pedidos.excluir(m[1]);

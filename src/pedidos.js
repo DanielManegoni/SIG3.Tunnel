@@ -163,6 +163,18 @@ function editar(id, { descricao, responsavel } = {}, agora = Date.now()) {
   return publico;
 }
 
+// Marca quando o túnel de um cliente conectou ('ultimaConexao') ou foi usado por um técnico ('ultimoUso').
+// Só mexe em pedido entregue (o que tem token); sem pedido para o código, não faz nada.
+function registrarAtividade(codigo, campo, agora = Date.now()) {
+  if (!['ultimaConexao', 'ultimoUso'].includes(campo)) throw new Error('campo inválido');
+  const lista = lerPedidos();
+  const p = lista.find(x => x.codigo === codigo && x.status === 'entregue');
+  if (!p) return false;
+  p[campo] = new Date(agora).toISOString();
+  gravarPedidos(lista);
+  return true;
+}
+
 // Exclui o cliente: some da lista e o token dele é revogado (a chave deixa de valer).
 function excluir(id) {
   const lista = lerPedidos();
@@ -182,4 +194,4 @@ function listar(agora = Date.now()) {
   });
 }
 
-module.exports = { criar, aprovar, recusar, entregar, editar, excluir, listar, ErroPedido, MAX_PENDENTES_POR_IP, MAX_CRIADOS_IP_HORA, VALIDADE_MS, PODA_MS };
+module.exports = { criar, aprovar, recusar, entregar, editar, excluir, registrarAtividade, listar, ErroPedido, MAX_PENDENTES_POR_IP, MAX_CRIADOS_IP_HORA, VALIDADE_MS, PODA_MS };

@@ -6,6 +6,7 @@ const { randomUUID }                 = require('crypto');
 const { validate }                   = require('./tokens');
 const { errorResponse }              = require('./errors');
 const { tratarApi, ipDe }            = require('./api');
+const { registrarAtividade }         = require('./pedidos');
 const tecnicos                       = require('./tecnicos');
 const { lerJson }                    = require('./arquivo');
 const { TOKENS_FILE, PEDIDOS_FILE, TECNICOS_FILE } = require('./paths');
@@ -234,6 +235,21 @@ function verificarArquivos() {
   for (const f of [TOKENS_FILE, PEDIDOS_FILE, TECNICOS_FILE]) lerJson(f);
 }
 
+// Registra conexão/uso no pedido do cliente. Falha de gravação não pode derrubar o túnel.
+const ultimoUsoGravado = new Map(); // nome -> instante da última gravação (no máximo 1 por minuto)
+function registrar(nome, campo) {
+  try {
+    if (campo === 'ultimoUso') {
+      const agora = Date.now();
+      if (agora - (ultimoUsoGravado.get(nome) || 0) < 60000) return;
+      ultimoUsoGravado.set(nome, agora);
+    }
+    registrarAtividade(nome, campo);
+  } catch (e) {
+    console.error(`[sig3tunnel] não consegui registrar ${campo} de "${nome}": ${e.message}`);
+  }
+}
+
 function serve(port, host) {
   verificarArquivos();
   const server = http.createServer((req, res) => {
@@ -244,7 +260,10 @@ function serve(port, host) {
 
     if ((req.url || '').startsWith('/api-tunel/')) {
       // derrubar: fecha o túnel conectado com esse nome (usado ao excluir um cliente)
-      tratarApi(req, res, { derrubar: nome => { const ws = peers.get(nome); if (ws) ws.close(1008, 'tunnel removed'); } });
+      tratarApi(req, res, {
+        derrubar:  nome => { const ws = peers.get(nome); if (ws) ws.close(1008, 'tunnel removed'); },
+        conectado: nome => peers.get(nome)?.readyState === WebSocket.OPEN,
+      });
       return;
     }
 
@@ -267,6 +286,8 @@ function serve(port, host) {
       errorResponse(res, 404);
       return;
     }
+
+    registrar(name, 'ultimoUso');   // técnico autorizado acessou este túnel (mesmo que ele esteja offline)
 
     const peer = peers.get(name);
     if (!peer || peer.readyState !== WebSocket.OPEN) {
@@ -369,6 +390,7 @@ function serve(port, host) {
     ws.on('pong', () => { ws._pingPending = false; });
 
     peers.set(name, ws);
+    registrar(name, 'ultimaConexao');
     console.log(`[sig3tunnel] "${name}" connected from ${req.socket.remoteAddress}`);
 
     ws.on('message', (raw, isBinary) => {

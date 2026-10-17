@@ -105,3 +105,25 @@ test('HTTP: excluir apaga o cliente e revoga o token', async () => {
   assert.equal(lista.corpo.some(p => p.id === id), false);
   assert.equal((await pedir('DELETE', `/api-tunel/admin/pedidos/${id}`, { cabecalhos: auth })).status, 404);
 });
+
+test('registrarAtividade grava conexão e uso só em pedido entregue, e a lista traz online', async () => {
+  const pedidos = require('../src/pedidos');
+  const auth = { authorization: `Bearer ${assinar(valido())}` };
+  const novo = await pedir('POST', '/api-tunel/pedidos', { corpo: { descricao: 'Uso', segredo: SEG } });
+  const { id, codigo } = novo.corpo;
+
+  assert.equal(pedidos.registrarAtividade(codigo, 'ultimaConexao'), false, 'pendente não registra');
+  await pedir('POST', `/api-tunel/admin/pedidos/${id}/aprovar`, { cabecalhos: auth });
+  await pedir('GET', `/api-tunel/pedidos/${id}`, { cabecalhos: { 'x-pedido-segredo': SEG } });
+
+  const t = Date.parse('2026-10-17T12:00:00Z');
+  assert.equal(pedidos.registrarAtividade(codigo, 'ultimaConexao', t), true);
+  assert.equal(pedidos.registrarAtividade(codigo, 'ultimoUso', t + 1000), true);
+  assert.throws(() => pedidos.registrarAtividade(codigo, 'segredoHash'));
+
+  const lista = await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: auth });
+  const c = lista.corpo.find(p => p.id === id);
+  assert.equal(c.ultimaConexao, '2026-10-17T12:00:00.000Z');
+  assert.equal(c.ultimoUso, '2026-10-17T12:00:01.000Z');
+  assert.equal(c.online, false);
+});
