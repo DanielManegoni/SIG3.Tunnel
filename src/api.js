@@ -13,6 +13,7 @@
 
 const crypto  = require('crypto');
 const pedidos = require('./pedidos');
+const jwt     = require('./jwt');
 
 const MAX_JSON = 8 * 1024;
 
@@ -50,7 +51,20 @@ function ipDe(req) {
   return (local && req.headers['x-real-ip']) || origem;
 }
 
+// Admin entra por senha (X-Admin-Senha) ou pelo JWT do NewAdmin (Authorization: Bearer), que só vale
+// com SIG3TUNNEL_JWT_SECRET definido. Emissor e audiência têm o padrão do NewAdmin e podem ser trocados.
+function adminPorJwt(req) {
+  const m = /^Bearer (.+)$/.exec(String(req.headers.authorization || ''));
+  if (!m) return false;
+  return !!jwt.validarAdmin(m[1], {
+    segredo:  process.env.SIG3TUNNEL_JWT_SECRET || '',
+    issuer:   process.env.SIG3TUNNEL_JWT_ISSUER   || 'vsig_backup_manager_issuer',
+    audience: process.env.SIG3TUNNEL_JWT_AUDIENCE || 'vsig_backup_manager_audience',
+  });
+}
+
 function adminOk(req) {
+  if (adminPorJwt(req)) return true;
   const senha = process.env.SIG3TUNNEL_ADMIN_SENHA || '';
   if (!senha) return false;
   const a = Buffer.from(senha);
@@ -92,6 +106,7 @@ function admin(req) {
 
 const STATUS_DE_ERRO = {
   nao_encontrado:      404,
+  responsavel_invalido: 400,
   segredo_errado:      403,
   sem_codigo:          503,
   estado_invalido:     409,
@@ -100,8 +115,28 @@ const STATUS_DE_ERRO = {
   muitos_pedidos:      429,
 };
 
+// CORS só para o NewAdmin (origem fixa). SIG3TUNNEL_CORS_ORIGINS (vírgula) acrescenta outras, p.ex. em teste.
+const ORIGENS_FIXAS = ['https://app.bossoistec.com.br'];
+
+function cors(req, res) {
+  const extras = (process.env.SIG3TUNNEL_CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const lista = [...ORIGENS_FIXAS, ...extras];
+  const origem = req.headers.origin;
+  if (!origem || !lista.includes(origem)) return false;
+  res.setHeader('Access-Control-Allow-Origin', origem);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Admin-Senha');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+  return true;
+}
+
 async function tratarApi(req, res) {
   const p = new URL(req.url, 'http://relay').pathname;
+  const comCors = cors(req, res);
+  if (req.method === 'OPTIONS') {
+    res.writeHead(comCors ? 204 : 403);
+    return res.end();
+  }
   try {
     if (req.method === 'POST' && p === '/api-tunel/pedidos') {
       const corpo = await lerJson(req);
@@ -124,6 +159,11 @@ async function tratarApi(req, res) {
       if (estado === 'bloqueado') return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas senhas erradas. Espere 15 minutos.' });
       if (estado !== 'ok') return enviar(res, 403, { erro: 'admin_negado' });
       if (req.method === 'GET' && p === '/api-tunel/admin/pedidos') return enviar(res, 200, pedidos.listar());
+      m = p.match(/^\/api-tunel\/admin\/pedidos\/([0-9a-f]{16})$/);
+      if (req.method === 'PATCH' && m) {
+        const corpo = await lerJson(req);
+        return enviar(res, 200, pedidos.editar(m[1], { descricao: corpo.descricao, responsavel: corpo.responsavel }));
+      }
       m = p.match(/^\/api-tunel\/admin\/pedidos\/([0-9a-f]{16})\/(aprovar|recusar)$/);
       if (req.method === 'POST' && m) {
         const r = m[2] === 'aprovar'

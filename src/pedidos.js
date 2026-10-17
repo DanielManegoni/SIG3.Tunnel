@@ -142,6 +142,27 @@ function entregar(id, segredo, agora = Date.now()) {
   return { status: 'aprovado', token: emitido.raw, nome: p.codigo };
 }
 
+// Cadastro do cliente: nome (a descrição do pedido) e responsável pelo sistema. Campo ausente não muda.
+function editar(id, { descricao, responsavel } = {}, agora = Date.now()) {
+  const lista = lerPedidos().map(p => atual(p, agora));
+  const i = lista.findIndex(p => p.id === id);
+  if (i === -1) throw new ErroPedido('nao_encontrado', 'Pedido não encontrado.');
+
+  if (descricao !== undefined) {
+    const d = String(descricao).trim();
+    if (d.length < 1 || d.length > 120) throw new ErroPedido('descricao_invalida', 'O nome precisa ter de 1 a 120 caracteres.');
+    lista[i].descricao = d;
+  }
+  if (responsavel !== undefined) {
+    const r = String(responsavel).trim();
+    if (r.length > 60) throw new ErroPedido('responsavel_invalido', 'O responsável pode ter no máximo 60 caracteres.');
+    if (r) lista[i].responsavel = r; else delete lista[i].responsavel;
+  }
+  gravarPedidos(lista);
+  const { segredoHash, ...publico } = lista[i];
+  return publico;
+}
+
 // Visão do administrador: sem o hash do segredo.
 function listar(agora = Date.now()) {
   return lerPedidos().map(p => {
@@ -151,4 +172,4 @@ function listar(agora = Date.now()) {
   });
 }
 
-module.exports = { criar, aprovar, recusar, entregar, listar, ErroPedido, MAX_PENDENTES_POR_IP, MAX_CRIADOS_IP_HORA, VALIDADE_MS, PODA_MS };
+module.exports = { criar, aprovar, recusar, entregar, editar, listar, ErroPedido, MAX_PENDENTES_POR_IP, MAX_CRIADOS_IP_HORA, VALIDADE_MS, PODA_MS };
