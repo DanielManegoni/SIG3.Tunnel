@@ -83,6 +83,7 @@ ainda é aceito pelo relay.
   - chave de técnico errada: 20 erros em 15 min bloqueiam o IP por 15 min (429, mesmo com a chave certa);
   - token de túnel errado no WebSocket: 30 erros em 15 min bloqueiam por 10 min (fecha 1008 `rate limited`);
   - token de admin inválido: 10 erros em 15 min, 15 min de bloqueio;
+    (token **expirado**, com assinatura certa, responde 401 `sessao_expirada` e não conta: é sessão que venceu, não invasão);
   - segredo de pedido errado: 10 erros em 15 min, 15 min de bloqueio;
   - API: no máximo 120 chamadas por minuto por IP.
   O IP é o `X-Real-IP`, só confiado quando a conexão vem do loopback (o nginx).

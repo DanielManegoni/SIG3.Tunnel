@@ -63,18 +63,19 @@ function ipDe(req) {
 const SEGREDO_MIN = 32;
 let avisouSegredoCurto = false;
 
-function adminPayload(req) {
+// Devolve { payload } ou { erro: 'invalido' | 'expirado' } (ver jwt.conferirToken).
+function conferirAdmin(req) {
   const m = /^Bearer (.+)$/.exec(String(req.headers.authorization || ''));
-  if (!m) return null;
+  if (!m) return { erro: 'invalido' };
   const segredo = process.env.SIG3TUNNEL_JWT_SECRET || '';
   if (segredo.length < SEGREDO_MIN) {
     if (segredo && !avisouSegredoCurto) {
       avisouSegredoCurto = true;
       console.error(`[sig3tunnel] SIG3TUNNEL_JWT_SECRET tem menos de ${SEGREDO_MIN} caracteres: login de admin DESLIGADO.`);
     }
-    return null;
+    return { erro: 'invalido' };
   }
-  return jwt.validarAdmin(m[1], {
+  return jwt.conferirToken(m[1], {
     segredo,
     issuer:   process.env.SIG3TUNNEL_JWT_ISSUER   || 'vsig_backup_manager_issuer',
     audience: process.env.SIG3TUNNEL_JWT_AUDIENCE || 'vsig_backup_manager_audience',
@@ -89,11 +90,14 @@ const falhasSegredo = criarLimitadorDeFalhas({ max: 10, janelaMs: 15 * 60_000, b
 // Teto de chamadas por IP na API toda (inclusive as públicas).
 const taxaApi = criarLimitadorDeTaxa({ max: 120, janelaMs: 60_000 });
 
-// { estado: 'ok', login, perfil } | { estado: 'negado' } | { estado: 'bloqueado' }
+// { estado: 'ok', login, perfil } | { estado: 'negado' } | { estado: 'expirado' } | { estado: 'bloqueado' }
+// Token expirado (assinatura certa, só o prazo venceu) NÃO conta como falha: é uma sessão legítima que acabou, e
+// contar derrubaria o IP de um escritório inteiro depois de dez cliques de quem esqueceu de entrar de novo.
 function admin(req) {
   const ip = ipDe(req);
   if (falhasAdmin.bloqueado(ip)) return { estado: 'bloqueado' };
-  const payload = adminPayload(req);
+  const { payload, erro } = conferirAdmin(req);
+  if (erro === 'expirado') return { estado: 'expirado' };
   if (!payload) {
     falhasAdmin.falha(ip);
     return { estado: 'negado' };
@@ -168,6 +172,7 @@ async function tratarApi(req, res, { derrubar = () => {}, conectado = () => fals
     if (p.startsWith('/api-tunel/admin/')) {
       const acesso = admin(req);
       if (acesso.estado === 'bloqueado') return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas tentativas inválidas. Espere 15 minutos.' });
+      if (acesso.estado === 'expirado') return enviar(res, 401, { erro: 'sessao_expirada', mensagem: 'Sua sessão expirou. Entre de novo.' });
       if (acesso.estado !== 'ok') return enviar(res, 403, { erro: 'admin_negado' });
       // Usuário comum só LÊ a lista; aprovar, recusar, editar e excluir são do perfil admin.
       if (!(req.method === 'GET' && p === '/api-tunel/admin/pedidos') && acesso.perfil !== 'admin')

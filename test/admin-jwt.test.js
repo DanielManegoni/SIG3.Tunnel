@@ -203,3 +203,32 @@ test('registrarAtividade guarda a porta local anunciada e ignora valor inválido
   c = (await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: auth })).corpo.find(p => p.id === id);
   assert.equal(c.porta, 5249);
 });
+
+test('token expirado: 401 sessao_expirada, sem contar como falha (não bloqueia o IP); assinatura errada segue 403', async () => {
+  const ip = { 'x-real-ip': '11.11.11.11' };
+  const expirado = { authorization: `Bearer ${assinar(valido({ exp: Math.floor(Date.now() / 1000) - 60 }))}`, ...ip };
+  for (let i = 0; i < 15; i++) {
+    const r = await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: expirado });
+    assert.equal(r.status, 401, `tentativa ${i + 1}`);
+    assert.equal(r.corpo.erro, 'sessao_expirada');
+  }
+  // Depois de 15 expirados o IP continua livre: um token bom do mesmo IP passa.
+  const bom = await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: { authorization: `Bearer ${assinar(valido())}`, ...ip } });
+  assert.equal(bom.status, 200);
+
+  // Assinatura errada continua negada (403) e CONTA: 10 erros bloqueiam o IP.
+  const falso = { authorization: `Bearer ${assinar(valido(), 'outro-segredo-qualquer-com-mais-de-32-caracteres')}`, 'x-real-ip': '12.12.12.12' };
+  for (let i = 0; i < 10; i++) assert.equal((await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: falso })).status, 403);
+  assert.equal((await pedir('GET', '/api-tunel/admin/pedidos', { cabecalhos: falso })).status, 429);
+});
+
+test('token expirado com perfil/emissor errado NÃO vira "expirado" (continua inválido)', () => {
+  const { conferirToken } = require('../src/jwt');
+  const o = { segredo: process.env.SIG3TUNNEL_JWT_SECRET, issuer: ISS, audience: AUD, perfis: ['admin', 'user'] };
+  const velho = Math.floor(Date.now() / 1000) - 60;
+  assert.deepEqual(conferirToken(assinar(valido({ exp: velho })), o), { erro: 'expirado' });
+  assert.deepEqual(conferirToken(assinar(valido({ exp: velho, iss: 'outro' })), o), { erro: 'invalido' });
+  assert.deepEqual(conferirToken(assinar(valido({ exp: velho, profile: 'x' })), o), { erro: 'invalido' });
+  assert.deepEqual(conferirToken(assinar(valido({ exp: velho }), 'outro-segredo'), o), { erro: 'invalido' });
+  assert.ok(conferirToken(assinar(valido()), o).payload);
+});
