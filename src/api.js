@@ -5,6 +5,7 @@
 //   POST /api-tunel/pedidos                       { descricao, segredo }        -> 201 { id, codigo, status }
 //   GET  /api-tunel/pedidos/<id>                  cabecalho X-Pedido-Segredo    -> { status, token? }
 //   GET    /api-tunel/admin/pedidos                 Authorization: Bearer <jwt>  -> lista
+//   GET    /api-tunel/admin/tecnicos                Authorization: Bearer <jwt>  -> [{ id, nome, criado }]  (chaves dos tecnicos do suporte; sem hash)
 //   PATCH  /api-tunel/admin/pedidos/<id>            { descricao?, responsavel? }
 //   DELETE /api-tunel/admin/pedidos/<id>            revoga o token e derruba o tunel
 //   POST   /api-tunel/admin/pedidos/<id>/aprovar
@@ -15,6 +16,7 @@
 
 const pedidos = require('./pedidos');
 const jwt     = require('./jwt');
+const tecnicos = require('./tecnicos');
 const { criarLimitadorDeFalhas, criarLimitadorDeTaxa } = require('./limite');
 const { CABECALHOS_SEGUROS } = require('./seguranca');
 
@@ -174,10 +176,13 @@ async function tratarApi(req, res, { derrubar = () => {}, conectado = () => fals
       if (acesso.estado === 'bloqueado') return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas tentativas inválidas. Espere 15 minutos.' });
       if (acesso.estado === 'expirado') return enviar(res, 401, { erro: 'sessao_expirada', mensagem: 'Sua sessão expirou. Entre de novo.' });
       if (acesso.estado !== 'ok') return enviar(res, 403, { erro: 'admin_negado' });
-      // Usuário comum só LÊ a lista; aprovar, recusar, editar e excluir são do perfil admin.
-      if (!(req.method === 'GET' && p === '/api-tunel/admin/pedidos') && acesso.perfil !== 'admin')
+      // Usuário comum só LÊ as listas (clientes e técnicos); aprovar, recusar, editar e excluir são do perfil admin.
+      const leitura = req.method === 'GET' && (p === '/api-tunel/admin/pedidos' || p === '/api-tunel/admin/tecnicos');
+      if (!leitura && acesso.perfil !== 'admin')
         return enviar(res, 403, { erro: 'somente_admin', mensagem: 'Só administradores podem alterar clientes do túnel.' });
       if (req.method === 'GET' && p === '/api-tunel/admin/pedidos') return enviar(res, 200, pedidos.listar().map(p => ({ ...p, online: conectado(p.codigo) })));
+      // Só id, nome e data: o hash da chave nunca sai do relay.
+      if (req.method === 'GET' && p === '/api-tunel/admin/tecnicos') return enviar(res, 200, tecnicos.listar());
       m = p.match(/^\/api-tunel\/admin\/pedidos\/([0-9a-f]{16})$/);
       if (req.method === 'DELETE' && m) {
         const r = pedidos.excluir(m[1]);

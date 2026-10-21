@@ -232,3 +232,23 @@ test('token expirado com perfil/emissor errado NÃO vira "expirado" (continua in
   assert.deepEqual(conferirToken(assinar(valido({ exp: velho }), 'outro-segredo'), o), { erro: 'invalido' });
   assert.ok(conferirToken(assinar(valido()), o).payload);
 });
+
+test('HTTP: lista de técnicos exige o JWT, traz só id, nome e data, e o usuário comum só lê', async () => {
+  const tecnicos = require('../src/tecnicos');
+  const emitido = tecnicos.emitir('Ana Suporte');
+  const admin = { authorization: `Bearer ${assinar(valido())}` };
+  const comum = { authorization: `Bearer ${assinar(valido({ profile: 'user' }))}` };
+
+  assert.equal((await pedir('GET', '/api-tunel/admin/tecnicos')).status, 403);
+
+  const r = await pedir('GET', '/api-tunel/admin/tecnicos', { cabecalhos: admin });
+  assert.equal(r.status, 200);
+  const t = r.corpo.find(x => x.id === emitido.id);
+  assert.equal(t.nome, 'Ana Suporte');
+  assert.ok(t.criado);
+  assert.equal(t.hash, undefined, 'o hash da chave não sai pela API');
+  assert.equal(JSON.stringify(r.corpo).includes(emitido.raw), false, 'a chave em claro nunca aparece');
+
+  assert.equal((await pedir('GET', '/api-tunel/admin/tecnicos', { cabecalhos: comum })).status, 200);
+  assert.equal((await pedir('POST', '/api-tunel/admin/tecnicos', { corpo: { nome: 'X' }, cabecalhos: comum })).status, 403);
+});
