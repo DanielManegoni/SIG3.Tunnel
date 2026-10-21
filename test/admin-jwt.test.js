@@ -252,3 +252,32 @@ test('HTTP: lista de técnicos exige o JWT, traz só id, nome e data, e o usuár
   assert.equal((await pedir('GET', '/api-tunel/admin/tecnicos', { cabecalhos: comum })).status, 200);
   assert.equal((await pedir('POST', '/api-tunel/admin/tecnicos', { corpo: { nome: 'X' }, cabecalhos: comum })).status, 403);
 });
+
+test('HTTP: admin emite a chave do técnico (aparece uma vez) e revoga; usuário comum não', async () => {
+  const tecnicos = require('../src/tecnicos');
+  const admin = { authorization: `Bearer ${assinar(valido())}` };
+  const comum = { authorization: `Bearer ${assinar(valido({ profile: 'user' }))}` };
+
+  assert.equal((await pedir('POST', '/api-tunel/admin/tecnicos', { corpo: { nome: 'Bia' } })).status, 403);
+  assert.equal((await pedir('POST', '/api-tunel/admin/tecnicos', { corpo: { nome: 'Bia' }, cabecalhos: comum })).status, 403);
+  assert.equal((await pedir('POST', '/api-tunel/admin/tecnicos', { corpo: { nome: '   ' }, cabecalhos: admin })).status, 400);
+  assert.equal((await pedir('POST', '/api-tunel/admin/tecnicos', { corpo: {}, cabecalhos: admin })).status, 400);
+  assert.equal((await pedir('POST', '/api-tunel/admin/tecnicos', { corpo: { nome: 'x'.repeat(61) }, cabecalhos: admin })).status, 400);
+
+  const criado = await pedir('POST', '/api-tunel/admin/tecnicos', { corpo: { nome: '  Bia Suporte ' }, cabecalhos: admin });
+  assert.equal(criado.status, 201);
+  assert.equal(criado.corpo.nome, 'Bia Suporte');
+  assert.match(criado.corpo.chave, /^sig3t_[0-9a-f]{48}$/);
+  assert.ok(tecnicos.autorizar({ headers: { 'x-sig3-chave': criado.corpo.chave } }, 'abc'), 'a chave nova abre o túnel');
+
+  const lista = await pedir('GET', '/api-tunel/admin/tecnicos', { cabecalhos: admin });
+  assert.equal(JSON.stringify(lista.corpo).includes(criado.corpo.chave), false, 'a lista nunca traz a chave');
+  assert.ok(lista.corpo.some(x => x.id === criado.corpo.id));
+
+  assert.equal((await pedir('DELETE', `/api-tunel/admin/tecnicos/${criado.corpo.id}`, { cabecalhos: comum })).status, 403);
+  const ok = await pedir('DELETE', `/api-tunel/admin/tecnicos/${criado.corpo.id}`, { cabecalhos: admin });
+  assert.equal(ok.status, 200);
+  assert.equal(tecnicos.autorizar({ headers: { 'x-sig3-chave': criado.corpo.chave } }, 'abc'), null, 'chave revogada deixa de valer');
+  assert.equal((await pedir('DELETE', `/api-tunel/admin/tecnicos/${criado.corpo.id}`, { cabecalhos: admin })).status, 404);
+  assert.equal((await pedir('DELETE', '/api-tunel/admin/tecnicos/zzzz', { cabecalhos: admin })).status, 404);
+});

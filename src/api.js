@@ -6,6 +6,8 @@
 //   GET  /api-tunel/pedidos/<id>                  cabecalho X-Pedido-Segredo    -> { status, token? }
 //   GET    /api-tunel/admin/pedidos                 Authorization: Bearer <jwt>  -> lista
 //   GET    /api-tunel/admin/tecnicos                Authorization: Bearer <jwt>  -> [{ id, nome, criado }]  (chaves dos tecnicos do suporte; sem hash)
+//   POST   /api-tunel/admin/tecnicos                { nome }  -> 201 { id, nome, chave }   a chave em claro SO aparece nesta resposta
+//   DELETE /api-tunel/admin/tecnicos/<id>           revoga a chave (o cookie do tecnico perde a validade na hora)
 //   PATCH  /api-tunel/admin/pedidos/<id>            { descricao?, responsavel? }
 //   DELETE /api-tunel/admin/pedidos/<id>            revoga o token e derruba o tunel
 //   POST   /api-tunel/admin/pedidos/<id>/aprovar
@@ -183,6 +185,22 @@ async function tratarApi(req, res, { derrubar = () => {}, conectado = () => fals
       if (req.method === 'GET' && p === '/api-tunel/admin/pedidos') return enviar(res, 200, pedidos.listar().map(p => ({ ...p, online: conectado(p.codigo) })));
       // Só id, nome e data: o hash da chave nunca sai do relay.
       if (req.method === 'GET' && p === '/api-tunel/admin/tecnicos') return enviar(res, 200, tecnicos.listar());
+      if (req.method === 'POST' && p === '/api-tunel/admin/tecnicos') {
+        const corpo = await lerJson(req);
+        const nome = typeof corpo.nome === 'string' ? corpo.nome.trim() : '';
+        if (!nome) return enviar(res, 400, { erro: 'nome_invalido', mensagem: 'Informe o nome do técnico.' });
+        if (nome.length > 60) return enviar(res, 400, { erro: 'nome_invalido', mensagem: 'O nome do técnico aceita até 60 caracteres.' });
+        const t = tecnicos.emitir(nome);
+        auditar(req, acesso.login, `emitiu a chave do técnico "${t.nome}"`, t.id);
+        return enviar(res, 201, { id: t.id, nome: t.nome, chave: t.raw });
+      }
+      m = p.match(/^\/api-tunel\/admin\/tecnicos\/([0-9a-f]{8})$/);
+      if (req.method === 'DELETE' && m) {
+        const antes = tecnicos.listar().find(x => x.id === m[1]);
+        if (!tecnicos.revogar(m[1])) return enviar(res, 404, { erro: 'nao_encontrado', mensagem: 'Técnico não encontrado.' });
+        auditar(req, acesso.login, `revogou a chave do técnico "${antes ? antes.nome : '?'}"`, m[1]);
+        return enviar(res, 200, { id: m[1], excluido: true });
+      }
       m = p.match(/^\/api-tunel\/admin\/pedidos\/([0-9a-f]{16})$/);
       if (req.method === 'DELETE' && m) {
         const r = pedidos.excluir(m[1]);
