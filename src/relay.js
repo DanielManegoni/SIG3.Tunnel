@@ -504,6 +504,8 @@ function serve(port, host) {
   server.headersTimeout  = 20_000;
   server.requestTimeout  = 120_000;
   server.maxHeadersCount = 100;
+  // O Node só confere esses prazos a cada connectionsCheckingInterval (30 s por padrão): o "20 s" virava até 50 s.
+  server.connectionsCheckingInterval = 5_000;
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MENSAGEM_WS });
 

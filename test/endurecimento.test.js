@@ -229,6 +229,11 @@ test('IPv6: quem troca de endereço dentro do bloco a cada tentativa é bloquead
   assert.equal(lim.bloqueado('2001:db8:9:8::7'), false);
 });
 
+test('conexão lenta (slowloris): os prazos do servidor são conferidos a cada 5 s, não a cada 30', () => {
+  assert.equal(relayServer.headersTimeout, 20_000);
+  assert.ok(relayServer.connectionsCheckingInterval <= 5_000);
+});
+
 // ── segredo do cookie ───────────────────────────────────────────────────────────────────
 
 test('SIG3TUNNEL_SEGREDO curto impede o relay de subir; com 32 caracteres ou mais, sobe', () => {
