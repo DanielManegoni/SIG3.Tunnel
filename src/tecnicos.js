@@ -54,6 +54,10 @@ function porChave(raw) {
 
 const existe = id => ler().some(t => t.id === id);
 
+// A chave existe e não foi revogada? Devolve o técnico ({ id, nome, ... }) ou null. É o que o servidor da estação do
+// técnico pergunta ao relay (POST /api-tunel/tecnico/validar) para liberar o PC no --full do SIG3.Client.
+const validarChave = raw => porChave(raw);
+
 // O segredo do cookie nasce sozinho na primeira vez e fica ao lado dos tokens. Trocá-lo derruba
 // todos os cookies emitidos (os técnicos entram de novo com a chave, sem perceber).
 // Vindo do ambiente, precisa ter 32 caracteres ou mais: quem tem UM cookie válido (todo técnico tem) testa
@@ -142,4 +146,4 @@ function limparCabecalhos(headers) {
   return headers;
 }
 
-module.exports = { emitir, listar, revogar, existe, autorizar, limparCabecalhos, montarCookie, porCookie, verificarSegredo, SEGREDO_MIN, COOKIE, CABECALHO };
+module.exports = { emitir, listar, revogar, existe, validarChave, autorizar, limparCabecalhos, montarCookie, porCookie, verificarSegredo, SEGREDO_MIN, COOKIE, CABECALHO };

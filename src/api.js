@@ -4,6 +4,7 @@
 //
 //   POST /api-tunel/pedidos                       { descricao, segredo }        -> 201 { id, codigo, status }
 //   GET  /api-tunel/pedidos/<id>                  cabecalho X-Pedido-Segredo    -> { status, token? }
+//   POST /api-tunel/tecnico/validar               { chave }                     -> 200 { valido, nome } | 403   (o servidor da estacao do tecnico confere a chave)
 //   GET    /api-tunel/admin/pedidos                 Authorization: Bearer <jwt>  -> lista
 //   GET    /api-tunel/admin/tecnicos                Authorization: Bearer <jwt>  -> [{ id, nome, criado }]  (chaves dos tecnicos do suporte; sem hash)
 //   POST   /api-tunel/admin/tecnicos                { nome }  -> 201 { id, nome, chave }   a chave em claro SO aparece nesta resposta
@@ -89,6 +90,8 @@ function conferirAdmin(req) {
 
 // Token de admin inválido: 10 erros em 15 min bloqueiam o IP por 15 min. Acerto zera a conta.
 const falhasAdmin = criarLimitadorDeFalhas({ max: 10, janelaMs: 15 * 60_000, bloqueioMs: 15 * 60_000 });
+// Chave de técnico errada no /tecnico/validar (o mesmo teto da chave errada num túnel).
+const falhasChave = criarLimitadorDeFalhas({ max: 20, janelaMs: 15 * 60_000, bloqueioMs: 15 * 60_000 });
 // Segredo de pedido errado (quem tenta adivinhar o segredo de outro pedido).
 const falhasSegredo = criarLimitadorDeFalhas({ max: 10, janelaMs: 15 * 60_000, bloqueioMs: 15 * 60_000 });
 // Teto de chamadas por IP na API toda (inclusive as públicas).
@@ -159,6 +162,18 @@ async function tratarApi(req, res, { derrubar = () => {}, conectado = () => fals
         autoAprovar: process.env.SIG3TUNNEL_AUTO_APROVAR === '1',
       });
       return enviar(res, 201, r);
+    }
+
+    // Confere uma chave de técnico (sig3t_...). Só diz se vale e o nome: o servidor da estação do técnico usa para liberar o
+    // PC no --full. Chave errada conta contra o IP (20 em 15 min bloqueiam), como em qualquer outro lugar que aceita chave.
+    if (req.method === 'POST' && p === '/api-tunel/tecnico/validar') {
+      const ip = ipDe(req);
+      if (falhasChave.bloqueado(ip)) return enviar(res, 429, { erro: 'muitas_tentativas', mensagem: 'Muitas tentativas inválidas. Espere 15 minutos.' });
+      const corpo = await lerJson(req);
+      const t = typeof corpo.chave === 'string' ? tecnicos.validarChave(corpo.chave) : null;
+      if (!t) { falhasChave.falha(ip); return enviar(res, 403, { erro: 'chave_invalida' }); }
+      falhasChave.zerar(ip);
+      return enviar(res, 200, { valido: true, nome: t.nome });
     }
 
     let m = p.match(/^\/api-tunel\/pedidos\/([0-9a-f]{16})$/);

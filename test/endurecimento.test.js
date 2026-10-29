@@ -244,3 +244,37 @@ test('SIG3TUNNEL_SEGREDO curto impede o relay de subir; com 32 caracteres ou mai
   assert.throws(() => rodar('curto'), /menos de 32 caracteres/);
   assert.doesNotThrow(() => rodar('x'.repeat(40)));
 });
+
+// ── /api-tunel/tecnico/validar: o servidor da estação do técnico confere a chave (--full do SIG3.Client) ───────────
+
+function postarValidar(corpo) {
+  return new Promise((resolve, reject) => {
+    const dados = typeof corpo === 'string' ? corpo : JSON.stringify(corpo);
+    const req = http.request({ host: '127.0.0.1', port: relayPort, method: 'POST', path: '/api-tunel/tecnico/validar',
+      headers: { host: 'tunel.bossoistec.test', 'content-type': 'application/json', 'content-length': Buffer.byteLength(dados) } },
+      res => { let b = ''; res.on('data', d => b += d); res.on('end', () => resolve({ s: res.statusCode, corpo: b })); });
+    req.on('error', reject);
+    req.end(dados);
+  });
+}
+
+test('validar: chave de técnico válida devolve 200 com o nome; sem expor o hash', async () => {
+  const r = await postarValidar({ chave });
+  assert.equal(r.s, 200);
+  assert.deepEqual(JSON.parse(r.corpo), { valido: true, nome: 'Teste' });
+});
+
+test('validar: chave inventada, de formato errado, vazia, de outro tipo ou corpo ruim dá 403 (ou 400) e nunca 200', async () => {
+  for (const c of ['sig3t_' + 'a'.repeat(48), 'sig3t_curta', '', null, 123, tokens.issue('x').raw]) {
+    assert.equal((await postarValidar({ chave: c })).s, 403, JSON.stringify(c));
+  }
+  assert.equal((await postarValidar({})).s, 403);
+  assert.equal((await postarValidar('isto nao e json')).s, 400);
+});
+
+test('validar: chave revogada deixa de valer na hora', async () => {
+  const t = tecnicos.emitir('Sera revogado');
+  assert.equal((await postarValidar({ chave: t.raw })).s, 200);
+  tecnicos.revogar(t.id);
+  assert.equal((await postarValidar({ chave: t.raw })).s, 403);
+});
