@@ -141,7 +141,7 @@ function cors(req, res) {
   return true;
 }
 
-async function tratarApi(req, res, { derrubar = () => {}, conectado = () => false } = {}) {
+async function tratarApi(req, res, { derrubar = () => {}, conectado = () => false, aoRevogarTecnico = () => {} } = {}) {
   const p = new URL(req.url, 'http://relay').pathname;
   const comCors = cors(req, res);
   if (!taxaApi.permitir(ipDe(req))) return enviar(res, 429, { erro: 'muitas_chamadas', mensagem: 'Muitas chamadas. Espere um minuto.' });
@@ -198,6 +198,7 @@ async function tratarApi(req, res, { derrubar = () => {}, conectado = () => fals
       if (req.method === 'DELETE' && m) {
         const antes = tecnicos.listar().find(x => x.id === m[1]);
         if (!tecnicos.revogar(m[1])) return enviar(res, 404, { erro: 'nao_encontrado', mensagem: 'Técnico não encontrado.' });
+        aoRevogarTecnico();   // derruba o que ele já tinha aberto (o cookie perde a validade sozinho)
         auditar(req, acesso.login, `revogou a chave do técnico "${antes ? antes.nome : '?'}"`, m[1]);
         return enviar(res, 200, { id: m[1], excluido: true });
       }

@@ -9,7 +9,7 @@ const { tratarApi, ipDe }            = require('./api');
 const { registrarAtividade }         = require('./pedidos');
 const tecnicos                       = require('./tecnicos');
 const { lerJson }                    = require('./arquivo');
-const { criarLimitadorDeFalhas }     = require('./limite');
+const { criarLimitadorDeFalhas, criarLimitadorDeTaxa } = require('./limite');
 const { CABECALHOS_SEGUROS, REDIRECIONAR_RAIZ_PARA } = require('./seguranca');
 const { TOKENS_FILE, PEDIDOS_FILE, TECNICOS_FILE } = require('./paths');
 
@@ -24,6 +24,10 @@ const MAX_UPGRADES = 256;
 const MAX_QUEUE_POR_TUNEL    = 64;
 const MAX_UPGRADES_POR_TUNEL = 64;
 
+// O SIG3 tem este tempo para responder ao pedido de upgrade com o 101; passou, o socket do navegador é derrubado.
+const HANDSHAKE_UPGRADE_MS = 30_000;
+const PREFIXO_101          = 'HTTP/1.1 101';
+
 // A Cloudflare corta a resposta em 100 s (erro 524). O SIG3 desiste em 90 s (TunelSig3Tunnel) e
 // responde 502; o relay espera um pouco mais, para a resposta do SIG3 chegar antes do 504 daqui.
 const TEMPO_RESPOSTA_MS = 95_000;
@@ -32,6 +36,8 @@ const TEMPO_RESPOSTA_MS = 95_000;
 // de quem APRESENTOU uma credencial: visitante sem nada (scanner) leva 404 e não enche a conta.
 const falhasTecnico = criarLimitadorDeFalhas({ max: 20, janelaMs: 15 * 60_000, bloqueioMs: 15 * 60_000 });
 const falhasToken   = criarLimitadorDeFalhas({ max: 30, janelaMs: 15 * 60_000, bloqueioMs: 10 * 60_000 });
+// Quem tem token válido também não reconecta sem parar: cada conexão grava em disco. Chave = nome do túnel.
+const taxaConexao   = criarLimitadorDeTaxa({ max: 30, janelaMs: 60_000 });
 
 const peers    = new Map(); // name → ws
 const queue    = new Map(); // requestId → { res, timer, peerName }
@@ -80,6 +86,26 @@ function autorizarTecnico(req, tunel) {
   if (comChave) { if (auth) falhasTecnico.zerar(ip); else falhasTecnico.falha(ip); }
   if (auth?.novoCookie) console.log(`[sig3tunnel] técnico "${auth.tecnico.nome}" entrou em "${tunel}" de ${ip}`);
   return auth;
+}
+
+// Os túneis são irmãos (tunel-A e tunel-B no mesmo domínio): para o navegador são o MESMO site, e o cookie do
+// técnico em A acompanha um pedido que a página servida em B dispare contra A (um formulário, um fetch, um
+// WebSocket). Quem serve a página de B é o SIG3 de um cliente, que o relay não controla. Então um pedido
+// autorizado só pelo cookie precisa nascer na própria página do túnel: o navegador diz isso em Sec-Fetch-Site e
+// Origin. Só o clique num link (navegação GET) vindo de outro site passa. A chave no cabeçalho não passa por
+// aqui: um site não consegue pôr cabeçalho próprio no pedido sem o relay deixar.
+function origemSuspeita(req) {
+  const site = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  if (site === 'cross-site' || site === 'same-site') {
+    const modo = String(req.headers['sec-fetch-mode'] || '').toLowerCase();
+    if (!(modo === 'navigate' && (req.method === 'GET' || req.method === 'HEAD'))) return true;
+    // enquadrar um túnel dentro da página de outro (iframe) é clickjacking entre irmãos
+    if (['iframe', 'frame', 'embed', 'object'].includes(String(req.headers['sec-fetch-dest'] || '').toLowerCase())) return true;
+  }
+  const origem = req.headers.origin;
+  if (origem === undefined) return false;
+  try { return new URL(origem).host !== String(req.headers.host || '').toLowerCase(); }
+  catch { return true; }   // "null" (iframe isolado, data:) e o que não for um endereço
 }
 
 // Um túnel não planta cookie nos outros: tira o Domain= de todo Set-Cookie, que vira só do host
@@ -169,8 +195,50 @@ function responder(entry, status, headersBrutos, corpo) {
   }
 }
 
+// Encerra um upgrade pelo relay. `destruir` corta o socket na hora (o normal é terminar a escrita e deixar o
+// navegador fechar); `avisar` manda ao SIG3 o up-close, para ele soltar o socket local.
+function fecharUpgrade(id, { destruir = false, avisar = false } = {}) {
+  const up = upgrades.get(id);
+  if (!up) return;
+  upgrades.delete(id);
+  clearTimeout(up.timer);
+  if (destruir) up.socket.destroy(); else up.socket.end();
+  const peer = peers.get(up.peerName);
+  if (avisar && peer && peer.readyState === WebSocket.OPEN) peer.send(JSON.stringify({ type: 'up-close', id }));
+}
+
+// A resposta do SIG3 ao pedido de upgrade tem de ser um 101; só depois disso os bytes dele passam crus ao
+// navegador. Sem essa conferência, o SIG3 podia responder com uma resposta HTTP comum e completa e deixar o
+// socket aberto: para o nginx (se ele guarda conexões com o relay para reaproveitar) a resposta terminou, a
+// conexão volta ao conjunto, e o próximo pedido de OUTRA pessoa cai neste socket e é entregue a esse SIG3, com o
+// Authorization e os cookies dela. Resposta que não é 101 derruba o socket: a conexão nunca é reaproveitada.
+function escreverNoUpgrade(id, up, bytes) {
+  if (up.confirmado) { up.socket.write(bytes); return; }
+  up.inicio = Buffer.concat([up.inicio, bytes]);
+  if (up.inicio.length < PREFIXO_101.length) return;
+  if (up.inicio.toString('latin1', 0, PREFIXO_101.length) !== PREFIXO_101) {
+    console.error(`[sig3tunnel] "${up.peerName}" respondeu ao upgrade com algo que não é um 101; socket derrubado`);
+    fecharUpgrade(id, { destruir: true, avisar: true });
+    return;
+  }
+  up.confirmado = true;
+  clearTimeout(up.timer);
+  up.socket.write(up.inicio);
+  up.inicio = null;
+}
+
+// Técnico revogado perde o cookie na hora, mas o upgrade que ele já tinha aberto (o circuito do Blazor) seguiria
+// vivo. Derruba os upgrades cujo técnico não existe mais; roda a cada ping e quando a API revoga uma chave.
+function derrubarUpgradesDeRevogados() {
+  for (const [id, up] of upgrades) {
+    if (!up.tecnicoId || tecnicos.existe(up.tecnicoId)) continue;
+    console.log(`[sig3tunnel] chave revogada: upgrade de "${up.peerName}" derrubado`);
+    fecharUpgrade(id, { destruir: true, avisar: true });
+  }
+}
+
 // Upgrades de WebSocket do navegador (o /_blazor) viajam como bytes crus: o relay liga o socket do
-// navegador ao túnel, e o SIG3 o liga ao localhost. Sem timeout: dura enquanto o socket durar.
+// navegador ao túnel, e o SIG3 o liga ao localhost. Dura enquanto o socket durar; o que tem prazo é o 101.
 function tunnelUpgrade(req, socket, head) {
   // Depois do 'upgrade' o http do Node solta o tratamento de erro do socket: sem este, um ECONNRESET do
   // navegador (que acontece o tempo todo) vira exceção não tratada e derruba o relay.
@@ -189,6 +257,16 @@ function tunnelUpgrade(req, socket, head) {
     socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     return;
   }
+  // Só WebSocket. Qualquer outro "Upgrade" abriria um pipe de bytes até a porta local do cliente, por onde dá para
+  // falar HTTP à vontade com ela, fora das conferências que o SIG3 faz em cada pedido.
+  if (String(req.headers.upgrade || '').toLowerCase() !== 'websocket') {
+    socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    return;
+  }
+  if (!acesso.novoCookie && origemSuspeita(req)) {
+    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    return;
+  }
 
   const peer = peers.get(name);
   if (!peer || peer.readyState !== WebSocket.OPEN) {
@@ -204,7 +282,15 @@ function tunnelUpgrade(req, socket, head) {
   const id      = randomUUID();
   const headers = cabecalhosRepasse(req);
 
-  upgrades.set(id, { socket, peerName: name });
+  // inicio/confirmado: o que o SIG3 respondeu até agora e se já provou ser um 101 (ver escreverNoUpgrade).
+  const timer = setTimeout(() => {
+    if (!upgrades.get(id)?.confirmado) {
+      console.error(`[sig3tunnel] "${name}" não respondeu ao upgrade em ${HANDSHAKE_UPGRADE_MS / 1000} s; socket derrubado`);
+      fecharUpgrade(id, { destruir: true, avisar: true });
+    }
+  }, HANDSHAKE_UPGRADE_MS);
+  timer.unref();
+  upgrades.set(id, { socket, peerName: name, tecnicoId: acesso.tecnico.id, confirmado: false, inicio: Buffer.alloc(0), timer });
 
   peer.send(JSON.stringify({
     type:    'upgrade',
@@ -222,7 +308,10 @@ function tunnelUpgrade(req, socket, head) {
   });
 
   const finish = () => {
-    if (!upgrades.delete(id)) return;
+    const up = upgrades.get(id);
+    if (!up) return;
+    upgrades.delete(id);
+    clearTimeout(up.timer);
     if (peer.readyState === WebSocket.OPEN) peer.send(JSON.stringify({ type: 'up-close', id }));
   };
 
@@ -236,6 +325,13 @@ function verificarArquivos() {
   for (const f of [TOKENS_FILE, PEDIDOS_FILE, TECNICOS_FILE]) lerJson(f);
 }
 
+// Recusa uma conexão de túnel. O close do WebSocket espera o outro lado responder (até 30 s); quem não é
+// cliente de verdade não responde, e as conexões ficariam penduradas. Passado o prazo curto, corta.
+function recusarCliente(ws, motivo) {
+  ws.close(1008, motivo);
+  setTimeout(() => ws.terminate(), 3000).unref();
+}
+
 // Mensagem recebida do SIG3 de um cliente (túnel <name>): resposta de requisição ou dados de um upgrade.
 function tratarMensagem(name, raw, isBinary) {
   // Frame binário: 36 bytes de id + dados de um upgrade, ou o quadro de uma resposta HTTP.
@@ -244,7 +340,7 @@ function tratarMensagem(name, raw, isBinary) {
     const id = raw.subarray(0, 36).toString('ascii');
     const up = upgrades.get(id);
     if (up) {
-      if (up.peerName === name) up.socket.write(raw.subarray(36));
+      if (up.peerName === name) escreverNoUpgrade(id, up, raw.subarray(36));
       return;
     }
     const entry = queue.get(id);
@@ -265,10 +361,9 @@ function tratarMensagem(name, raw, isBinary) {
     const up = upgrades.get(msg.id);
     if (!up || up.peerName !== name) return;
     if (msg.type === 'up-close') {
-      upgrades.delete(msg.id);
-      up.socket.end();
+      fecharUpgrade(msg.id);
     } else if (typeof msg.data === 'string') {
-      up.socket.write(Buffer.from(msg.data, 'base64'));
+      escreverNoUpgrade(msg.id, up, Buffer.from(msg.data, 'base64'));
     }
     return;
   }
@@ -291,15 +386,17 @@ function portaAnunciada(req) {
 }
 
 // Registra conexão/uso no pedido do cliente. Falha de gravação não pode derrubar o túnel.
-const ultimoUsoGravado = new Map(); // nome -> instante da última gravação (no máximo 1 por minuto)
+// Cada gravação lê o arquivo de pedidos inteiro, reescreve e dá fsync, tudo síncrono: sem teto, um SIG3 que
+// reconecta em laço (com token válido) ocuparia o relay de todos os clientes.
+const ultimaGravacao = new Map(); // "campo:nome" -> instante da última gravação
+const INTERVALO_GRAVACAO_MS = { ultimoUso: 60_000, ultimaConexao: 15_000 };
 function registrar(nome, campo, extras) {
   try {
-    if (campo === 'ultimoUso') {
-      const agora = Date.now();
-      if (agora - (ultimoUsoGravado.get(nome) || 0) < 60000) return;
-      ultimoUsoGravado.set(nome, agora);
-    }
-    registrarAtividade(nome, campo, Date.now(), extras);
+    const agora = Date.now();
+    const chave = `${campo}:${nome}`;
+    if (agora - (ultimaGravacao.get(chave) || 0) < INTERVALO_GRAVACAO_MS[campo]) return;
+    ultimaGravacao.set(chave, agora);
+    registrarAtividade(nome, campo, agora, extras);
   } catch (e) {
     console.error(`[sig3tunnel] não consegui registrar ${campo} de "${nome}": ${e.message}`);
   }
@@ -307,6 +404,9 @@ function registrar(nome, campo, extras) {
 
 function serve(port, host) {
   verificarArquivos();
+  tecnicos.verificarSegredo();   // segredo do cookie fraco impede o relay de subir, em vez de assinar cookies frágeis
+  if (process.env.SIG3TUNNEL_AUTO_APROVAR === '1')
+    console.error('[sig3tunnel] ATENÇÃO: SIG3TUNNEL_AUTO_APROVAR=1. Todo pedido é aprovado sem ninguém olhar. Só serve para teste; tire isto da produção.');
   const server = http.createServer((req, res) => {
     if (!caminhoLocal(req.url)) {
       errorResponse(res, 400);
@@ -318,6 +418,7 @@ function serve(port, host) {
       tratarApi(req, res, {
         derrubar:  nome => { const ws = peers.get(nome); if (ws) ws.close(1008, 'tunnel removed'); },
         conectado: nome => peers.get(nome)?.readyState === WebSocket.OPEN,
+        aoRevogarTecnico: derrubarUpgradesDeRevogados,
       });
       return;
     }
@@ -342,6 +443,10 @@ function serve(port, host) {
         return;
       }
       errorResponse(res, 404);
+      return;
+    }
+    if (!auth.novoCookie && origemSuspeita(req)) {
+      errorResponse(res, 403);
       return;
     }
 
@@ -413,6 +518,7 @@ function serve(port, host) {
 
   // Detect dead connections: ping every PING_INTERVAL, terminate if no pong.
   setInterval(() => {
+    derrubarUpgradesDeRevogados();   // revogação feita pelo CLI (outro processo) chega aqui
     for (const [name, ws] of peers) {
       if (ws._pingPending) {
         console.log(`[sig3tunnel] "${name}" ping timeout, terminating`);
@@ -432,7 +538,7 @@ function serve(port, host) {
     const isDefault = rawPath === '/_sig3';
 
     if (!isDefault && !/^\/_sig3\/[a-z0-9][a-z0-9-]{0,62}$/i.test(rawPath)) {
-      ws.close(1008, 'invalid path');
+      recusarCliente(ws, 'invalid path');
       return;
     }
 
@@ -440,18 +546,23 @@ function serve(port, host) {
     const ip   = ipDe(req);
 
     if (falhasToken.bloqueado(ip)) {
-      ws.close(1008, 'rate limited');
+      recusarCliente(ws, 'rate limited');
       return;
     }
     if (!token || !validate(token, name)) {
       if (token) falhasToken.falha(ip);
-      ws.close(1008, 'unauthorized');
+      recusarCliente(ws, 'unauthorized');
       return;
     }
     falhasToken.zerar(ip);
 
+    if (!taxaConexao.permitir(name)) {
+      recusarCliente(ws, 'rate limited');
+      return;
+    }
+
     if (peers.has(name) && peers.get(name).readyState === WebSocket.OPEN) {
-      ws.close(1008, 'name already in use');
+      recusarCliente(ws, 'name already in use');
       return;
     }
 
@@ -482,9 +593,7 @@ function serve(port, host) {
         queue.delete(id);
       }
       for (const [id, up] of upgrades) {
-        if (up.peerName !== name) continue;
-        upgrades.delete(id);
-        up.socket.destroy();
+        if (up.peerName === name) fecharUpgrade(id, { destruir: true });
       }
     });
 
@@ -498,4 +607,4 @@ function serve(port, host) {
   return server;
 }
 
-module.exports = { serve };
+module.exports = { serve, derrubarUpgradesDeRevogados };

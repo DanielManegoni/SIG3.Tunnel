@@ -4,6 +4,7 @@ const { CABECALHOS_SEGUROS } = require('./seguranca');
 
 const MENSAGENS = {
   400: 'Pedido inválido.',
+  403: 'Pedido não permitido.',
   404: 'Não encontrado.',
   413: 'Conteúdo grande demais.',
   429: 'Muitos pedidos ao mesmo tempo. Tente de novo em instantes.',

@@ -64,8 +64,10 @@ relay → SIG3   {"type": "upgrade", "id", "method", "url", "headers", "head": "
 os dois lados  quadro binário: 36 bytes de id + bytes crus
 os dois lados  {"type": "up-close", "id"}
 ```
-O SIG3 abre um socket em `127.0.0.1:<porta>`, repete o pedido de upgrade com `Host: localhost:<porta>`
-e liga os dois sentidos. O formato antigo de dados em texto (`{"type": "up-data", "id", "data"}`)
+O relay só aceita `Upgrade: websocket` (qualquer outro valor dá 400). O SIG3 abre um socket em
+`127.0.0.1:<porta>`, repete o pedido de upgrade com `Host: localhost:<porta>` e liga os dois sentidos.
+A primeira resposta dele tem de começar com `HTTP/1.1 101`, em até 30 s: qualquer outra coisa (ou o silêncio)
+faz o relay derrubar o socket do navegador. O formato antigo de dados em texto (`{"type": "up-data", "id", "data"}`)
 ainda é aceito pelo relay.
 
 ## Limites do relay
@@ -96,5 +98,8 @@ ainda é aceito pelo relay.
   login do token. Aprovar, recusar, editar e excluir ficam no log com login e IP.
 - **Cabeçalhos** nas respostas do próprio relay: `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`,
   `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Strict-Transport-Security`.
+- **Pedido de outro site:** autorizado só pelo cookie, o pedido precisa nascer na própria página do túnel
+  (`Sec-Fetch-Site`, `Sec-Fetch-Dest` e `Origin`); senão 403. Clicar num link (navegação GET) vindo de fora passa.
+- **Chave revogada** derruba também os upgrades que o técnico já tinha abertos.
 - **Servidor HTTP:** cabeçalhos em 20 s, pedido inteiro em 2 min, no máximo 100 cabeçalhos.
 - **Disco:** pasta de dados `0700`, arquivos `0600`.

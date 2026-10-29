@@ -52,12 +52,22 @@ function porChave(raw) {
   }) || null;
 }
 
+const existe = id => ler().some(t => t.id === id);
+
 // O segredo do cookie nasce sozinho na primeira vez e fica ao lado dos tokens. Trocá-lo derruba
 // todos os cookies emitidos (os técnicos entram de novo com a chave, sem perceber).
+// Vindo do ambiente, precisa ter 32 caracteres ou mais: quem tem UM cookie válido (todo técnico tem) testa
+// segredos fora do relay, sem limite nenhum, e um segredo curto cai; com ele forjam-se cookies para qualquer túnel.
+const SEGREDO_MIN = 32;
 let segredoEmMemoria = null;
 function segredo() {
   if (segredoEmMemoria) return segredoEmMemoria;
-  if (process.env.SIG3TUNNEL_SEGREDO) return (segredoEmMemoria = Buffer.from(process.env.SIG3TUNNEL_SEGREDO));
+  const doAmbiente = process.env.SIG3TUNNEL_SEGREDO;
+  if (doAmbiente) {
+    if (doAmbiente.length < SEGREDO_MIN)
+      throw new Error(`SIG3TUNNEL_SEGREDO tem menos de ${SEGREDO_MIN} caracteres: use algo aleatório (openssl rand -hex 32) ou tire a variável`);
+    return (segredoEmMemoria = Buffer.from(doAmbiente));
+  }
   try {
     segredoEmMemoria = fs.readFileSync(ARQUIVO_SEGREDO);
   } catch {
@@ -67,6 +77,9 @@ function segredo() {
   }
   return segredoEmMemoria;
 }
+
+// Chamado ao subir o relay: o erro aparece na partida, e não na primeira vez que um técnico entra.
+const verificarSegredo = () => { segredo(); };
 
 const assinatura = (id, expira, tunel) =>
   crypto.createHmac('sha256', segredo()).update(`${id}.${expira}.${tunel}`).digest('base64url');
@@ -129,4 +142,4 @@ function limparCabecalhos(headers) {
   return headers;
 }
 
-module.exports = { emitir, listar, revogar, autorizar, limparCabecalhos, montarCookie, porCookie, COOKIE, CABECALHO };
+module.exports = { emitir, listar, revogar, existe, autorizar, limparCabecalhos, montarCookie, porCookie, verificarSegredo, SEGREDO_MIN, COOKIE, CABECALHO };
